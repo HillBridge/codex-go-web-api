@@ -1,0 +1,59 @@
+package user
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"bridge-go/user-order-api/internal/platform/audit"
+	"bridge-go/user-order-api/internal/platform/httpx"
+)
+
+type Service struct {
+	repo  Repository
+	audit audit.Logger
+}
+
+func NewService(repo Repository, audit audit.Logger) *Service {
+	return &Service{repo: repo, audit: audit}
+}
+
+func (s *Service) Create(ctx context.Context, input CreateUserRequest) (User, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return User{}, httpx.BadRequest("name is required")
+	}
+	if !strings.Contains(input.Email, "@") {
+		return User{}, httpx.BadRequest("valid email is required")
+	}
+
+	user, err := s.repo.Create(ctx, input)
+	if err != nil {
+		if errors.Is(err, ErrEmailTaken) {
+			return User{}, httpx.BadRequest("email already exists")
+		}
+		return User{}, httpx.Internal("failed to create user", fmt.Errorf("create user: %w", err))
+	}
+
+	s.audit.Record(ctx, "user.created", map[string]any{"userID": user.ID})
+	return user, nil
+}
+
+func (s *Service) List(ctx context.Context) ([]User, error) {
+	users, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, httpx.Internal("failed to list users", fmt.Errorf("list users: %w", err))
+	}
+	return users, nil
+}
+
+func (s *Service) FindByID(ctx context.Context, id int64) (User, error) {
+	user, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return User{}, httpx.NotFound("user not found")
+		}
+		return User{}, httpx.Internal("failed to find user", fmt.Errorf("find user: %w", err))
+	}
+	return user, nil
+}
