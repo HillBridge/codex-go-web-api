@@ -74,6 +74,8 @@ curl http://localhost:8888/orders/1
 
 ## 项目结构
 
+完整的启动流程、分层职责和模块依赖关系见 [架构说明](docs/architecture.md)。
+
 ```text
 cmd/api
   main.go          程序入口

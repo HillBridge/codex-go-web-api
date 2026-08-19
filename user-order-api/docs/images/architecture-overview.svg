@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2000" height="1450" viewBox="0 0 2000 1450" role="img" aria-labelledby="title desc">
+  <title id="title">user-order-api 项目架构与依赖关系</title>
+  <desc id="desc">从程序入口、HTTP 路由到用户和订单业务、内存仓储、审计日志的依赖关系图。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#52606d"/></marker>
+    <marker id="dashArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f6fed"/></marker>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; fill: #1f2937; }
+      .title { font-size: 34px; font-weight: 700; }
+      .sub { font-size: 18px; fill: #52606d; }
+      .group { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 2; rx: 16; }
+      .group-title { font-size: 20px; font-weight: 700; fill: #334155; }
+      .node { fill: #ffffff; stroke: #94a3b8; stroke-width: 2; rx: 12; }
+      .entry { fill: #eff6ff; stroke: #60a5fa; }
+      .route { fill: #f0fdf4; stroke: #4ade80; }
+      .service { fill: #fff7ed; stroke: #fb923c; }
+      .port { fill: #faf5ff; stroke: #c084fc; }
+      .platform { fill: #fdf2f8; stroke: #f472b6; }
+      .runtime { fill: #f1f5f9; stroke: #64748b; }
+      .node-title { font-size: 18px; font-weight: 700; }
+      .node-text { font-size: 15px; fill: #475569; }
+      .edge { stroke: #52606d; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+      .inject { stroke: #2f6fed; stroke-width: 2.5; fill: none; stroke-dasharray: 9 7; marker-end: url(#dashArrow); }
+      .label { font-size: 14px; fill: #475569; }
+      .inject-label { font-size: 14px; fill: #2f6fed; }
+    </style>
+  </defs>
+
+  <rect width="2000" height="1450" fill="#ffffff"/>
+  <text x="70" y="60" class="title">user-order-api：项目架构与依赖关系</text>
+  <text x="70" y="92" class="sub">实线：运行时调用　　虚线：newServer() 创建、注册或依赖注入　　全部能力均来自 Go 标准库</text>
+
+  <rect x="70" y="125" width="1860" height="250" class="group"/>
+  <text x="100" y="162" class="group-title">启动与请求入口 · cmd/api</text>
+  <rect x="110" y="205" width="220" height="100" class="node entry"/>
+  <text x="220" y="243" class="node-title" text-anchor="middle">main()</text><text x="220" y="271" class="node-text" text-anchor="middle">cmd/api/main.go</text>
+  <rect x="440" y="205" width="270" height="100" class="node entry"/>
+  <text x="575" y="243" class="node-title" text-anchor="middle">newServer()</text><text x="575" y="271" class="node-text" text-anchor="middle">组合根 / 依赖组装</text>
+  <rect x="820" y="205" width="260" height="100" class="node entry"/>
+  <text x="950" y="243" class="node-title" text-anchor="middle">http.Server</text><text x="950" y="271" class="node-text" text-anchor="middle">监听 :8888</text>
+  <rect x="1190" y="205" width="270" height="100" class="node entry"/>
+  <text x="1325" y="243" class="node-title" text-anchor="middle">请求日志中间件</text><text x="1325" y="271" class="node-text" text-anchor="middle">method / path → slog</text>
+  <rect x="1570" y="205" width="250" height="100" class="node entry"/>
+  <text x="1695" y="243" class="node-title" text-anchor="middle">http.ServeMux</text><text x="1695" y="271" class="node-text" text-anchor="middle">路由分发</text>
+  <path d="M330 255 H440" class="edge"/><text x="365" y="238" class="label">调用</text>
+  <path d="M710 235 H820" class="edge"/><text x="730" y="218" class="label">返回 Handler</text>
+  <path d="M1080 255 H1190" class="edge"/><path d="M1460 255 H1570" class="edge"/>
+  <path d="M90 255 H110" class="edge"/><text x="74" y="224" class="label">客户端</text>
+
+  <rect x="70" y="410" width="1860" height="190" class="group"/>
+  <text x="100" y="447" class="group-title">HTTP 路由层 · Handler</text>
+  <rect x="180" y="485" width="300" height="75" class="node route"/>
+  <text x="330" y="516" class="node-title" text-anchor="middle">GET /health</text><text x="330" y="542" class="node-text" text-anchor="middle">匿名 handler</text>
+  <rect x="790" y="475" width="360" height="95" class="node route"/>
+  <text x="970" y="512" class="node-title" text-anchor="middle">user.Handler</text><text x="970" y="540" class="node-text" text-anchor="middle">/users · /users/:id · 2 秒 Context</text>
+  <rect x="1390" y="475" width="360" height="95" class="node route"/>
+  <text x="1570" y="512" class="node-title" text-anchor="middle">order.Handler</text><text x="1570" y="540" class="node-text" text-anchor="middle">/orders · /orders/:id · 2 秒 Context</text>
+  <path d="M1695 305 V455 H330 V485" class="edge"/><path d="M1695 305 V455 H970 V475" class="edge"/><path d="M1695 305 V455 H1570 V475" class="edge"/>
+  <path d="M575 305 V385 H330 V485" class="inject"/><path d="M575 305 V385 H970 V475" class="inject"/><path d="M575 305 V385 H1570 V475" class="inject"/>
+  <text x="600" y="360" class="inject-label">注册路由</text>
+
+  <rect x="70" y="635" width="1210" height="265" class="group"/>
+  <text x="100" y="672" class="group-title">业务层 · Service</text>
+  <rect x="180" y="725" width="350" height="105" class="node service"/>
+  <text x="355" y="763" class="node-title" text-anchor="middle">user.Service</text><text x="355" y="791" class="node-text" text-anchor="middle">用户校验、错误翻译、审计</text>
+  <rect x="805" y="725" width="350" height="105" class="node service"/>
+  <text x="980" y="763" class="node-title" text-anchor="middle">order.Service</text><text x="980" y="791" class="node-text" text-anchor="middle">订单校验、用户存在性检查、审计</text>
+  <path d="M970 570 V725" class="edge"/><path d="M1570 570 V680 H980 V725" class="edge"/>
+  <path d="M575 305 V690 H355 V725" class="inject"/><path d="M575 305 V690 H980 V725" class="inject"/>
+  <text x="610" y="666" class="inject-label">注入</text>
+
+  <rect x="1320" y="635" width="610" height="265" class="group"/>
+  <text x="1350" y="672" class="group-title">公共能力 · internal/platform</text>
+  <rect x="1370" y="725" width="210" height="105" class="node platform"/>
+  <text x="1475" y="763" class="node-title" text-anchor="middle">httpx</text><text x="1475" y="791" class="node-text" text-anchor="middle">JSON / 错误 / 路径</text>
+  <rect x="1660" y="725" width="220" height="105" class="node platform"/>
+  <text x="1770" y="763" class="node-title" text-anchor="middle">audit.AsyncLogger</text><text x="1770" y="791" class="node-text" text-anchor="middle">goroutine 异步审计</text>
+  <path d="M970 570 V675 H1475 V725" class="edge"/><path d="M1570 570 V675 H1475 V725" class="edge"/>
+  <path d="M530 777 H1660" class="edge"/><path d="M1155 777 H1660" class="edge"/>
+
+  <rect x="70" y="935" width="1210" height="300" class="group"/>
+  <text x="100" y="972" class="group-title">数据访问层 · Repository 接口与内存实现</text>
+  <rect x="130" y="1025" width="230" height="95" class="node port"/>
+  <text x="245" y="1062" class="node-title" text-anchor="middle">user.Repository</text><text x="245" y="1090" class="node-text" text-anchor="middle">Create / List / FindByID</text>
+  <rect x="420" y="1025" width="250" height="95" class="node"/>
+  <text x="545" y="1062" class="node-title" text-anchor="middle">用户 MemoryRepository</text><text x="545" y="1090" class="node-text" text-anchor="middle">map + 邮箱唯一索引</text>
+  <rect x="760" y="1025" width="230" height="95" class="node port"/>
+  <text x="875" y="1062" class="node-title" text-anchor="middle">order.Repository</text><text x="875" y="1090" class="node-text" text-anchor="middle">Create / List / FindByID</text>
+  <rect x="1030" y="1025" width="200" height="95" class="node"/>
+  <text x="1130" y="1062" class="node-title" text-anchor="middle">订单 MemoryRepository</text><text x="1130" y="1090" class="node-text" text-anchor="middle">map 订单</text>
+  <rect x="530" y="1150" width="270" height="55" class="node port"/>
+  <text x="665" y="1184" class="node-title" text-anchor="middle">order.UserFinder → user.Service</text>
+  <path d="M355 830 V980 H245 V1025" class="edge"/><path d="M245 1073 H420" class="edge"/>
+  <path d="M980 830 V980 H875 V1025" class="edge"/><path d="M990 1073 H1030" class="edge"/>
+  <path d="M980 830 V1150 H800" class="edge"/><path d="M530 1177 H355 V830" class="edge"/>
+  <path d="M575 305 V985 H545 V1025" class="inject"/><path d="M575 305 V985 H1130 V1025" class="inject"/>
+
+  <rect x="1320" y="935" width="610" height="300" class="group"/>
+  <text x="1350" y="972" class="group-title">运行时资源</text>
+  <rect x="1380" y="1030" width="210" height="110" class="node runtime"/>
+  <text x="1485" y="1068" class="node-title" text-anchor="middle">进程内存</text><text x="1485" y="1096" class="node-text" text-anchor="middle">数据重启即丢失</text>
+  <rect x="1660" y="1030" width="210" height="110" class="node runtime"/>
+  <text x="1765" y="1068" class="node-title" text-anchor="middle">标准输出</text><text x="1765" y="1096" class="node-text" text-anchor="middle">slog 文本日志</text>
+  <path d="M670 1073 H1380" class="edge"/><path d="M1230 1073 H1380" class="edge"/>
+  <path d="M1770 830 V1030" class="edge"/><path d="M1325 305 V965 H1765 V1030" class="edge"/>
+
+  <text x="70" y="1335" class="sub">当前没有数据库、缓存、消息队列或外部 HTTP 服务。用户和订单数据均以带锁的 map 保存在应用进程内。</text>
+  <text x="70" y="1380" class="sub">关键边界：订单服务通过 UserFinder 接口查询用户，而不是直接访问用户仓储；service 通过 repository 接口隔离具体存储实现。</text>
+</svg>
