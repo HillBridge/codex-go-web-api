@@ -3,10 +3,14 @@ package httpx
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
 )
+
+const MaxJSONBodyBytes int64 = 1 << 20
 
 type AppError struct {
 	Status  int
@@ -37,6 +41,18 @@ func Internal(message string, err error) *AppError {
 	return &AppError{Status: http.StatusInternalServerError, Message: message, Err: err}
 }
 
+func UnsupportedMediaType(message string) *AppError {
+	return &AppError{Status: http.StatusUnsupportedMediaType, Message: message}
+}
+
+func RequestEntityTooLarge(message string) *AppError {
+	return &AppError{Status: http.StatusRequestEntityTooLarge, Message: message}
+}
+
+func MethodNotAllowed() *AppError {
+	return &AppError{Status: http.StatusMethodNotAllowed, Message: "method not allowed"}
+}
+
 func WriteJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -53,10 +69,40 @@ func WriteError(w http.ResponseWriter, err error) {
 	WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 }
 
-func DecodeJSON(r *http.Request, target any) error {
+func WriteMethodNotAllowed(w http.ResponseWriter, allow string) {
+	w.Header().Set("Allow", allow)
+	WriteError(w, MethodNotAllowed())
+}
+
+func DecodeJSON(w http.ResponseWriter, r *http.Request, target any) error {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return UnsupportedMediaType("Content-Type must be application/json")
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, MaxJSONBodyBytes)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	return decoder.Decode(target)
+	if err := decoder.Decode(target); err != nil {
+		return decodeError(err)
+	}
+
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return BadRequest("request body must contain a single JSON object")
+		}
+		return decodeError(err)
+	}
+
+	return nil
+}
+
+func decodeError(err error) error {
+	var maxBytesError *http.MaxBytesError
+	if errors.As(err, &maxBytesError) {
+		return RequestEntityTooLarge("request body too large")
+	}
+	return BadRequest("invalid JSON body")
 }
 
 func PathID(path, prefix string) (int64, error) {

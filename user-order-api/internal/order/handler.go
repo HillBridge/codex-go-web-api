@@ -35,8 +35,8 @@ func (h *Handler) orders(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, orders)
 	case http.MethodPost:
 		var input CreateOrderRequest
-		if err := httpx.DecodeJSON(r, &input); err != nil {
-			httpx.WriteError(w, httpx.BadRequest("invalid JSON body"))
+		if err := httpx.DecodeJSON(w, r, &input); err != nil {
+			httpx.WriteError(w, err)
 			return
 		}
 
@@ -47,7 +47,7 @@ func (h *Handler) orders(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteJSON(w, http.StatusCreated, order)
 	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		httpx.WriteMethodNotAllowed(w, "GET, POST")
 	}
 }
 
@@ -56,7 +56,7 @@ func (h *Handler) orderByID(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		httpx.WriteMethodNotAllowed(w, "GET")
 		return
 	}
 

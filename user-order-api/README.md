@@ -16,6 +16,19 @@ go run ./cmd/api
 http://localhost:8888
 ```
 
+可选环境变量：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `PORT` | `8888` | HTTP 监听端口，范围为 1–65535。 |
+| `READ_HEADER_TIMEOUT` | `5s` | 读取请求头超时。 |
+| `READ_TIMEOUT` | `15s` | 读取整个请求超时。 |
+| `WRITE_TIMEOUT` | `15s` | 写响应超时。 |
+| `IDLE_TIMEOUT` | `60s` | keep-alive 空闲连接超时。 |
+| `SHUTDOWN_TIMEOUT` | `10s` | 收到中断或 `SIGTERM` 后的优雅关闭等待时间。 |
+
+超时变量使用 Go duration 格式，例如 `WRITE_TIMEOUT=20s`。服务会在收到中断或 `SIGTERM` 时停止接收新请求，并等待在途请求完成。
+
 健康检查：
 
 ```bash

@@ -1,18 +1,31 @@
 package main
 
 import (
+	"context"
 	"log"
-	"net/http"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 func main() {
-	server := &http.Server{
-		Addr:    ":8888",
-		Handler: newServer(),
+	config, err := loadConfig(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	log.Println("user-order-api listening on http://localhost:8888")
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	listener, err := net.Listen("tcp", config.Addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	server := newHTTPServer(config, newServer())
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	log.Printf("user-order-api listening on http://%s", listener.Addr())
+	if err := serveUntilCancelled(ctx, server, listener, config.ShutdownTimeout); err != nil {
 		log.Fatal(err)
 	}
 }

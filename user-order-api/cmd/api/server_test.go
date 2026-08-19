@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -64,6 +66,77 @@ func TestDuplicateEmailIsRejected(t *testing.T) {
 	}
 	postJSON(t, server, "/users", payload, http.StatusCreated)
 	postJSON(t, server, "/users", payload, http.StatusBadRequest)
+}
+
+func TestRequestIDMiddlewareAddsResponseRequestID(t *testing.T) {
+	handler := requestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("X-Request-ID"); got == "" {
+		t.Fatal("X-Request-ID response header is empty")
+	}
+}
+
+func TestRequestIDMiddlewarePreservesCallerRequestID(t *testing.T) {
+	handler := requestIDMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Header.Set("X-Request-ID", "client-request-123")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("X-Request-ID"); got != "client-request-123" {
+		t.Fatalf("X-Request-ID = %q, want %q", got, "client-request-123")
+	}
+}
+
+func TestRecoveryMiddlewareReturnsJSONInternalServerError(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := recoveryMiddleware(logger, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("unexpected failure")
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want %q", got, "application/json")
+	}
+	if got := rec.Body.String(); got != "{\"error\":\"internal server error\"}\n" {
+		t.Fatalf("body = %q, want internal error JSON", got)
+	}
+}
+
+func TestUsersMethodNotAllowedReturnsJSONAndAllowHeader(t *testing.T) {
+	server := newServer()
+	req := httptest.NewRequest(http.MethodPut, "/users", nil)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if got := rec.Header().Get("Allow"); got != "GET, POST" {
+		t.Fatalf("Allow = %q, want %q", got, "GET, POST")
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type = %q, want %q", got, "application/json")
+	}
+	if got := rec.Body.String(); got != "{\"error\":\"method not allowed\"}\n" {
+		t.Fatalf("body = %q, want method-not-allowed JSON", got)
+	}
 }
 
 func postJSON(t *testing.T, handler http.Handler, path string, payload map[string]any, wantStatus int) []byte {
