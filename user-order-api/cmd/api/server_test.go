@@ -2,16 +2,19 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestUserAndOrderFlow(t *testing.T) {
-	server := newServer()
+	server := newTestServer(t)
 
 	userBody := postJSON(t, server, "/users", map[string]any{
 		"name":  "Ada",
@@ -49,7 +52,7 @@ func TestUserAndOrderFlow(t *testing.T) {
 }
 
 func TestRejectsOrderForMissingUser(t *testing.T) {
-	server := newServer()
+	server := newTestServer(t)
 
 	postJSON(t, server, "/orders", map[string]any{
 		"userId": 99,
@@ -58,7 +61,7 @@ func TestRejectsOrderForMissingUser(t *testing.T) {
 }
 
 func TestDuplicateEmailIsRejected(t *testing.T) {
-	server := newServer()
+	server := newTestServer(t)
 
 	payload := map[string]any{
 		"name":  "Ada",
@@ -119,7 +122,7 @@ func TestRecoveryMiddlewareReturnsJSONInternalServerError(t *testing.T) {
 }
 
 func TestUsersMethodNotAllowedReturnsJSONAndAllowHeader(t *testing.T) {
-	server := newServer()
+	server := newTestServer(t)
 	req := httptest.NewRequest(http.MethodPut, "/users", nil)
 	rec := httptest.NewRecorder()
 
@@ -137,6 +140,35 @@ func TestUsersMethodNotAllowedReturnsJSONAndAllowHeader(t *testing.T) {
 	if got := rec.Body.String(); got != "{\"error\":\"method not allowed\"}\n" {
 		t.Fatalf("body = %q, want method-not-allowed JSON", got)
 	}
+}
+
+func TestApplicationCloseDrainsAuditEvents(t *testing.T) {
+	var output bytes.Buffer
+	app := newApplication(slog.New(slog.NewTextHandler(&output, nil)))
+	app.auditLogger.Record(context.Background(), "order.created", map[string]any{"orderID": int64(1)})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := app.Close(ctx); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	if got := output.String(); !strings.Contains(got, "action=order.created") {
+		t.Fatalf("audit output = %q, want drained order.created event", got)
+	}
+}
+
+func newTestServer(t *testing.T) *application {
+	t.Helper()
+	server := newServer()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := server.Close(ctx); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	return server
 }
 
 func postJSON(t *testing.T, handler http.Handler, path string, payload map[string]any, wantStatus int) []byte {

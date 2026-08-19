@@ -45,7 +45,7 @@ flowchart TB
     subgraph platform["平台公共能力：internal/platform"]
         httpx["httpx<br/>JSON 解码 / 响应 / AppError / 路径 ID"]
         auditPort["audit.Logger interface"]
-        auditLogger["audit.AsyncLogger<br/>goroutine 异步审计"]
+        auditLogger["audit.AsyncLogger<br/>有界队列 + 固定 worker"]
     end
 
     subgraph runtime["运行时资源"]
@@ -95,7 +95,7 @@ flowchart TB
 - Service 负责参数校验、业务规则和底层错误到 `httpx.AppError` 的转换。
 - Service 依赖 repository 接口，而非内存实现；因此可在不改变 service 的情况下替换为数据库实现。
 - `order.Service` 通过 `UserFinder` 接口依赖用户查询能力，而不直接访问用户仓储。
-- `audit.Logger` 是共享端口，当前由 `AsyncLogger` 以 goroutine 异步写入结构化日志。
+- `audit.Logger` 是共享端口，当前由 `AsyncLogger` 通过有界队列和固定 worker 异步写入结构化日志；队列满时最佳努力丢弃，并在关闭窗口内排空已入队事件。
 
 ## 订单创建链路
 
@@ -128,7 +128,7 @@ sequenceDiagram
     alt 用户存在
         O->>OR: Create(ctx, input)
         OR-->>O: Order(status=pending)
-        O-)A: goroutine 记录 order.created
+        O-)A: 异步入队 order.created
         O-->>H: Order
         H-->>C: 201 JSON
     else 用户不存在或参数无效

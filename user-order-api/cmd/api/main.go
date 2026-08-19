@@ -20,7 +20,16 @@ func main() {
 		log.Fatal(err)
 	}
 
-	server := newHTTPServer(config, newServer())
+	application := newServer()
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
+		defer cancel()
+		if err := application.Close(shutdownCtx); err != nil {
+			log.Printf("audit shutdown failed: %v", err)
+		}
+	}()
+
+	server := newHTTPServer(config, application)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

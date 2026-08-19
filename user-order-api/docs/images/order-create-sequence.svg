@@ -42,7 +42,7 @@
   <rect x="830" y="800" width="1010" height="115" class="alt ok"/><text x="850" y="830" class="actor-title">用户存在</text>
   <path d="M935 855 H1730" class="call"/><text x="1332" y="840" class="label" text-anchor="middle">Create(ctx, input) → Order(status=pending)</text>
   <path d="M1730 885 H935" class="return"/>
-  <path d="M935 905 H1995" class="async"/><text x="1465" y="895" class="label" text-anchor="middle" fill="#a21caf">goroutine：记录 order.created</text>
+  <path d="M935 905 H1995" class="async"/><text x="1465" y="895" class="label" text-anchor="middle" fill="#a21caf">异步入队：order.created</text>
 
   <rect x="830" y="935" width="520" height="85" class="alt error"/><text x="850" y="965" class="actor-title">用户不存在或参数无效</text><text x="850" y="992" class="small">Order Service 返回 AppError</text>
   <path d="M935 1060 H670" class="return"/><text x="802" y="1045" class="label" text-anchor="middle">Order / AppError</text>

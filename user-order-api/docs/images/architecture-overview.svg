@@ -74,7 +74,7 @@
   <rect x="1370" y="725" width="210" height="105" class="node platform"/>
   <text x="1475" y="763" class="node-title" text-anchor="middle">httpx</text><text x="1475" y="791" class="node-text" text-anchor="middle">JSON / 错误 / 路径</text>
   <rect x="1660" y="725" width="220" height="105" class="node platform"/>
-  <text x="1770" y="763" class="node-title" text-anchor="middle">audit.AsyncLogger</text><text x="1770" y="791" class="node-text" text-anchor="middle">goroutine 异步审计</text>
+  <text x="1770" y="763" class="node-title" text-anchor="middle">audit.AsyncLogger</text><text x="1770" y="791" class="node-text" text-anchor="middle">有界队列 + 固定 worker</text>
   <path d="M970 570 V675 H1475 V725" class="edge"/><path d="M1570 570 V675 H1475 V725" class="edge"/>
   <path d="M530 777 H1660" class="edge"/><path d="M1155 777 H1660" class="edge"/>
 

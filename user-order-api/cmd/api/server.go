@@ -16,8 +16,17 @@ import (
 	"bridge-go/user-order-api/internal/user"
 )
 
-func newServer() http.Handler {
+type application struct {
+	handler     http.Handler
+	auditLogger *audit.AsyncLogger
+}
+
+func newServer() *application {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	return newApplication(logger)
+}
+
+func newApplication(logger *slog.Logger) *application {
 	auditLogger := audit.NewAsyncLogger(logger)
 
 	userRepo := user.NewMemoryRepository()
@@ -40,7 +49,18 @@ func newServer() http.Handler {
 	userHandler.Register(mux)
 	orderHandler.Register(mux)
 
-	return requestIDMiddleware(requestLogMiddleware(logger, recoveryMiddleware(logger, mux)))
+	return &application{
+		handler:     requestIDMiddleware(requestLogMiddleware(logger, recoveryMiddleware(logger, mux))),
+		auditLogger: auditLogger,
+	}
+}
+
+func (a *application) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.handler.ServeHTTP(w, r)
+}
+
+func (a *application) Close(ctx context.Context) error {
+	return a.auditLogger.Close(ctx)
 }
 
 func requestLogMiddleware(logger *slog.Logger, next http.Handler) http.Handler {

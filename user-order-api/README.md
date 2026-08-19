@@ -108,7 +108,7 @@ internal/order
   handler.go       HTTP handler
 
 internal/platform
-  audit            异步审计日志，演示 goroutine/context/defer
+  audit            有界队列与固定 worker 的异步审计日志；队列满时最佳努力丢弃并记录告警
   httpx            JSON、错误响应、路径参数工具
 ```
 
@@ -167,7 +167,7 @@ context.WithTimeout(r.Context(), 2*time.Second)
 
 ### goroutine
 
-`audit.AsyncLogger` 用 goroutine 异步记录审计日志，演示“不阻塞主业务”的后台任务。
+`audit.AsyncLogger` 使用有界队列和固定 worker goroutine 异步记录审计日志；队列满时不阻塞主业务，服务关闭时会在关闭窗口内排空已入队事件。
 
 ### defer
 
