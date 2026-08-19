@@ -8,6 +8,7 @@ import (
 
 	"bridge-go/user-order-api/internal/platform/audit"
 	"bridge-go/user-order-api/internal/platform/httpx"
+	"bridge-go/user-order-api/internal/platform/page"
 )
 
 type Service struct {
@@ -39,10 +40,10 @@ func (s *Service) Create(ctx context.Context, input CreateUserRequest) (User, er
 	return user, nil
 }
 
-func (s *Service) List(ctx context.Context) ([]User, error) {
-	users, err := s.repo.List(ctx)
+func (s *Service) List(ctx context.Context, request page.Request) (page.Result[User], error) {
+	users, err := s.repo.List(ctx, request)
 	if err != nil {
-		return nil, httpx.Internal("failed to list users", fmt.Errorf("list users: %w", err))
+		return page.Result[User]{}, httpx.Internal("failed to list users", fmt.Errorf("list users: %w", err))
 	}
 	return users, nil
 }

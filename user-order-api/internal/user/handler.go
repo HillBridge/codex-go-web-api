@@ -27,7 +27,12 @@ func (h *Handler) users(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		users, err := h.service.List(ctx)
+		request, err := httpx.ParsePageRequest(r)
+		if err != nil {
+			httpx.WriteError(w, err)
+			return
+		}
+		users, err := h.service.List(ctx, request)
 		if err != nil {
 			httpx.WriteError(w, err)
 			return

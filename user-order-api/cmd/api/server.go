@@ -23,18 +23,16 @@ type application struct {
 
 func newServer() *application {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	return newApplication(logger)
+	return newApplication(logger, user.NewMemoryRepository(), order.NewMemoryRepository())
 }
 
-func newApplication(logger *slog.Logger) *application {
+func newApplication(logger *slog.Logger, userRepo user.Repository, orderRepo order.Repository) *application {
 	auditLogger := audit.NewAsyncLogger(logger)
 
-	userRepo := user.NewMemoryRepository()
 	userService := user.NewService(userRepo, auditLogger)
 	userHandler := user.NewHandler(userService)
 
-	orderRepo := order.NewMemoryRepository()
-	orderService := order.NewService(orderRepo, userService, auditLogger)
+	orderService := order.NewService(orderRepo, userRepo, auditLogger)
 	orderHandler := order.NewHandler(orderService)
 
 	mux := http.NewServeMux()

@@ -7,6 +7,7 @@ import (
 
 	"bridge-go/user-order-api/internal/platform/audit"
 	"bridge-go/user-order-api/internal/platform/httpx"
+	"bridge-go/user-order-api/internal/platform/page"
 	"bridge-go/user-order-api/internal/user"
 )
 
@@ -33,11 +34,17 @@ func (s *Service) Create(ctx context.Context, input CreateOrderRequest) (Order, 
 	}
 
 	if _, err := s.users.FindByID(ctx, input.UserID); err != nil {
-		return Order{}, httpx.BadRequest("user does not exist")
+		if errors.Is(err, user.ErrNotFound) {
+			return Order{}, httpx.BadRequest("user does not exist")
+		}
+		return Order{}, httpx.Internal("failed to find user", fmt.Errorf("find user: %w", err))
 	}
 
 	order, err := s.repo.Create(ctx, input)
 	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return Order{}, httpx.BadRequest("user does not exist")
+		}
 		return Order{}, httpx.Internal("failed to create order", fmt.Errorf("create order: %w", err))
 	}
 
@@ -45,10 +52,10 @@ func (s *Service) Create(ctx context.Context, input CreateOrderRequest) (Order, 
 	return order, nil
 }
 
-func (s *Service) List(ctx context.Context) ([]Order, error) {
-	orders, err := s.repo.List(ctx)
+func (s *Service) List(ctx context.Context, request page.Request) (page.Result[Order], error) {
+	orders, err := s.repo.List(ctx, request)
 	if err != nil {
-		return nil, httpx.Internal("failed to list orders", fmt.Errorf("list orders: %w", err))
+		return page.Result[Order]{}, httpx.Internal("failed to list orders", fmt.Errorf("list orders: %w", err))
 	}
 	return orders, nil
 }

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"bridge-go/user-order-api/internal/platform/page"
 )
 
 const MaxJSONBodyBytes int64 = 1 << 20
@@ -118,4 +120,27 @@ func PathID(path, prefix string) (int64, error) {
 	}
 
 	return id, nil
+}
+
+func ParsePageRequest(r *http.Request) (page.Request, error) {
+	request := page.Request{Limit: 20}
+	query := r.URL.Query()
+
+	if rawLimit := query.Get("limit"); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit < 1 || limit > 100 {
+			return page.Request{}, BadRequest("limit must be between 1 and 100")
+		}
+		request.Limit = limit
+	}
+
+	if rawAfterID := query.Get("afterId"); rawAfterID != "" {
+		afterID, err := strconv.ParseInt(rawAfterID, 10, 64)
+		if err != nil || afterID <= 0 {
+			return page.Request{}, BadRequest("afterId must be a positive integer")
+		}
+		request.AfterID = afterID
+	}
+
+	return request, nil
 }

@@ -3,14 +3,39 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
+
+	"bridge-go/user-order-api/internal/order"
+	"bridge-go/user-order-api/internal/platform/database"
+	"bridge-go/user-order-api/internal/user"
 )
 
 func main() {
 	config, err := loadConfig(os.Getenv)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 10*time.Second)
+	db, err := database.Open(startupCtx, config.MySQLDSN)
+	cancelStartup()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("MySQL shutdown failed: %v", err)
+		}
+	}()
+
+	startupCtx, cancelStartup = context.WithTimeout(context.Background(), 10*time.Second)
+	err = database.ApplyMigrations(startupCtx, db)
+	cancelStartup()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -20,7 +45,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	application := newServer()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	application := newApplication(logger, user.NewMySQLRepository(db), order.NewMySQLRepository(db))
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
 		defer cancel()

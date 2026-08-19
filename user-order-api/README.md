@@ -2,11 +2,13 @@
 
 这是一个给前端同学练 Go 后端基础的小项目。
 
-第一阶段刻意只使用 Go 标准库，不引入 Gin、GORM、Redis、数据库等外部依赖，目的是把 Go 后端最基础的分层、接口、错误处理、上下文、并发和测试先练扎实。
+项目保留标准库 HTTP 分层，并使用 MySQL 持久化用户和订单数据；不引入 Gin、GORM、Redis 或 ORM，以便把 Go 后端的分层、接口、错误处理、上下文、并发、SQL 和迁移基础练扎实。
 
 ## 运行
 
 ```bash
+docker compose up -d
+export MYSQL_DSN='app:app_password@tcp(127.0.0.1:3307)/user_order_api?parseTime=true&charset=utf8mb4&loc=UTC'
 go run ./cmd/api
 ```
 
@@ -16,10 +18,11 @@ go run ./cmd/api
 http://localhost:8888
 ```
 
-可选环境变量：
+运行参数：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
+| `MYSQL_DSN` | 无，必填 | MySQL 连接串；应用启动时会执行尚未应用的迁移。 |
 | `PORT` | `8888` | HTTP 监听端口，范围为 1–65535。 |
 | `READ_HEADER_TIMEOUT` | `5s` | 读取请求头超时。 |
 | `READ_TIMEOUT` | `15s` | 读取整个请求超时。 |
@@ -27,7 +30,7 @@ http://localhost:8888
 | `IDLE_TIMEOUT` | `60s` | keep-alive 空闲连接超时。 |
 | `SHUTDOWN_TIMEOUT` | `10s` | 收到中断或 `SIGTERM` 后的优雅关闭等待时间。 |
 
-超时变量使用 Go duration 格式，例如 `WRITE_TIMEOUT=20s`。服务会在收到中断或 `SIGTERM` 时停止接收新请求，并等待在途请求完成。
+超时变量使用 Go duration 格式，例如 `WRITE_TIMEOUT=20s`。本地 MySQL 配置见 [.env.example](.env.example)；真实凭据应通过环境变量注入，`.env` 不会提交。服务会在收到中断或 `SIGTERM` 时停止接收新请求，并等待在途请求完成。
 
 健康检查：
 
@@ -54,7 +57,13 @@ curl -X POST http://localhost:8888/users \
 ### 查询用户列表
 
 ```bash
-curl http://localhost:8888/users
+curl 'http://localhost:8888/users?limit=20'
+```
+
+列表响应使用游标分页：`limit` 默认为 20，范围 1–100；首个请求可省略 `afterId`，后续请求将返回的 `nextCursor` 作为 `afterId` 传回。没有下一页时不会出现 `nextCursor`。
+
+```json
+{"items":[{"id":1,"name":"Ada","email":"ada@example.com"}],"nextCursor":"1"}
 ```
 
 ### 查询用户详情
@@ -76,7 +85,7 @@ curl -X POST http://localhost:8888/orders \
 ### 查询订单列表
 
 ```bash
-curl http://localhost:8888/orders
+curl 'http://localhost:8888/orders?limit=20'
 ```
 
 ### 查询订单详情
@@ -97,19 +106,23 @@ cmd/api
 
 internal/user
   model.go         User 和 CreateUserRequest
-  repository.go    用户存储接口和内存实现
+  repository.go    用户存储接口和内存实现（测试）
+  mysql_repository.go MySQL 持久化实现
   service.go       用户业务逻辑、参数校验、错误处理
   handler.go       HTTP handler
 
 internal/order
   model.go         Order、Status 和 CreateOrderRequest
-  repository.go    订单存储接口和内存实现
+  repository.go    订单存储接口和内存实现（测试）
+  mysql_repository.go MySQL 持久化实现
   service.go       订单业务逻辑，依赖 UserFinder interface
   handler.go       HTTP handler
 
 internal/platform
   audit            有界队列与固定 worker 的异步审计日志；队列满时最佳努力丢弃并记录告警
+  database         连接池、嵌入式向前迁移及 SQL 文件
   httpx            JSON、错误响应、路径参数工具
+  page             游标分页请求与响应契约
 ```
 
 ## 这版练到哪些 Go 基础

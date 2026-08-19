@@ -12,6 +12,7 @@ import (
 )
 
 type serverConfig struct {
+	MySQLDSN          string
 	Addr              string
 	ReadHeaderTimeout time.Duration
 	ReadTimeout       time.Duration
@@ -62,6 +63,11 @@ func loadConfig(getenv func(string) string) (serverConfig, error) {
 			return serverConfig{}, fmt.Errorf("%s must be a positive Go duration", item.name)
 		}
 		*item.target = duration
+	}
+
+	config.MySQLDSN = strings.TrimSpace(getenv("MYSQL_DSN"))
+	if config.MySQLDSN == "" {
+		return serverConfig{}, fmt.Errorf("MYSQL_DSN is required")
 	}
 
 	return config, nil

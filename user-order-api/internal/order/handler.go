@@ -27,7 +27,12 @@ func (h *Handler) orders(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		orders, err := h.service.List(ctx)
+		request, err := httpx.ParsePageRequest(r)
+		if err != nil {
+			httpx.WriteError(w, err)
+			return
+		}
+		orders, err := h.service.List(ctx, request)
 		if err != nil {
 			httpx.WriteError(w, err)
 			return

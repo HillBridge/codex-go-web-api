@@ -10,7 +10,7 @@ import (
 )
 
 func TestLoadConfigUsesDefaultPort(t *testing.T) {
-	config, err := loadConfig(func(string) string { return "" })
+	config, err := loadConfig(testEnvironment(nil))
 	if err != nil {
 		t.Fatalf("loadConfig() error = %v", err)
 	}
@@ -21,18 +21,36 @@ func TestLoadConfigUsesDefaultPort(t *testing.T) {
 }
 
 func TestLoadConfigUsesConfiguredPort(t *testing.T) {
-	config, err := loadConfig(func(key string) string {
-		if key == "PORT" {
-			return "9090"
-		}
-		return ""
-	})
+	config, err := loadConfig(testEnvironment(map[string]string{"PORT": "9090"}))
 	if err != nil {
 		t.Fatalf("loadConfig() error = %v", err)
 	}
 
 	if config.Addr != ":9090" {
 		t.Fatalf("Addr = %q, want %q", config.Addr, ":9090")
+	}
+}
+
+func TestLoadConfigUsesMySQLDSN(t *testing.T) {
+	wantDSN := "app:secret@tcp(localhost:3307)/user_order_api?parseTime=true&loc=UTC"
+	config, err := loadConfig(func(key string) string {
+		if key == "MYSQL_DSN" {
+			return wantDSN
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if config.MySQLDSN != wantDSN {
+		t.Fatalf("MySQLDSN = %q, want %q", config.MySQLDSN, wantDSN)
+	}
+}
+
+func TestLoadConfigRejectsMissingMySQLDSN(t *testing.T) {
+	_, err := loadConfig(func(string) string { return "" })
+	if err == nil || err.Error() != "MYSQL_DSN is required" {
+		t.Fatalf("loadConfig() error = %v, want %q", err, "MYSQL_DSN is required")
 	}
 }
 
@@ -61,7 +79,7 @@ func TestLoadConfigUsesConfiguredTimeouts(t *testing.T) {
 		"SHUTDOWN_TIMEOUT":    "5s",
 	}
 
-	config, err := loadConfig(func(key string) string { return environment[key] })
+	config, err := loadConfig(testEnvironment(environment))
 	if err != nil {
 		t.Fatalf("loadConfig() error = %v", err)
 	}
@@ -187,3 +205,12 @@ type testAddr string
 func (a testAddr) Network() string { return string(a) }
 
 func (a testAddr) String() string { return string(a) }
+
+func testEnvironment(values map[string]string) func(string) string {
+	return func(key string) string {
+		if key == "MYSQL_DSN" {
+			return "app:test@tcp(localhost:3307)/user_order_api?parseTime=true&loc=UTC"
+		}
+		return values[key]
+	}
+}

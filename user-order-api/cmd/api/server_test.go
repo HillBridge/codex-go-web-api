@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"bridge-go/user-order-api/internal/order"
+	"bridge-go/user-order-api/internal/user"
 )
 
 func TestUserAndOrderFlow(t *testing.T) {
@@ -69,6 +72,26 @@ func TestDuplicateEmailIsRejected(t *testing.T) {
 	}
 	postJSON(t, server, "/users", payload, http.StatusCreated)
 	postJSON(t, server, "/users", payload, http.StatusBadRequest)
+}
+
+func TestUsersListReturnsCursorPagination(t *testing.T) {
+	server := newTestServer(t)
+	postJSON(t, server, "/users", map[string]any{"name": "Ada", "email": "ada@example.com"}, http.StatusCreated)
+	postJSON(t, server, "/users", map[string]any{"name": "Grace", "email": "grace@example.com"}, http.StatusCreated)
+
+	body := get(t, server, "/users?limit=1", http.StatusOK)
+	var response struct {
+		Items []struct {
+			ID int64 `json:"id"`
+		} `json:"items"`
+		NextCursor string `json:"nextCursor"`
+	}
+	decodeBody(t, body, &response)
+	if len(response.Items) != 1 || response.Items[0].ID != 1 || response.NextCursor != "1" {
+		t.Fatalf("list response = %+v, want first user and cursor 1", response)
+	}
+
+	get(t, server, "/users?limit=0", http.StatusBadRequest)
 }
 
 func TestRequestIDMiddlewareAddsResponseRequestID(t *testing.T) {
@@ -144,7 +167,11 @@ func TestUsersMethodNotAllowedReturnsJSONAndAllowHeader(t *testing.T) {
 
 func TestApplicationCloseDrainsAuditEvents(t *testing.T) {
 	var output bytes.Buffer
-	app := newApplication(slog.New(slog.NewTextHandler(&output, nil)))
+	app := newApplication(
+		slog.New(slog.NewTextHandler(&output, nil)),
+		user.NewMemoryRepository(),
+		order.NewMemoryRepository(),
+	)
 	app.auditLogger.Record(context.Background(), "order.created", map[string]any{"orderID": int64(1)})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -155,6 +182,36 @@ func TestApplicationCloseDrainsAuditEvents(t *testing.T) {
 
 	if got := output.String(); !strings.Contains(got, "action=order.created") {
 		t.Fatalf("audit output = %q, want drained order.created event", got)
+	}
+}
+
+func TestApplicationUsesProvidedRepositories(t *testing.T) {
+	userRepo := user.NewMemoryRepository()
+	created, err := userRepo.Create(context.Background(), user.CreateUserRequest{Name: "Ada", Email: "ada@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app := newApplication(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		userRepo,
+		order.NewMemoryRepository(),
+	)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := app.Close(ctx); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+
+	body := get(t, app, "/users/1", http.StatusOK)
+	var returned struct {
+		ID int64 `json:"id"`
+	}
+	decodeBody(t, body, &returned)
+	if returned.ID != created.ID {
+		t.Fatalf("returned user ID = %d, want %d", returned.ID, created.ID)
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"bridge-go/user-order-api/internal/platform/page"
 )
 
 func TestDecodeJSONAcceptsSingleJSONValue(t *testing.T) {
@@ -50,6 +52,39 @@ func TestDecodeJSONRejectsOversizedBody(t *testing.T) {
 
 	err := DecodeJSON(httptest.NewRecorder(), req, &struct{}{})
 	assertAppError(t, err, http.StatusRequestEntityTooLarge, "request body too large")
+}
+
+func TestParsePageRequest(t *testing.T) {
+	tests := []struct {
+		name    string
+		query   string
+		want    page.Request
+		message string
+	}{
+		{name: "defaults", want: page.Request{Limit: 20}},
+		{name: "explicit cursor", query: "limit=3&afterId=12", want: page.Request{Limit: 3, AfterID: 12}},
+		{name: "zero limit", query: "limit=0", message: "limit must be between 1 and 100"},
+		{name: "too large limit", query: "limit=101", message: "limit must be between 1 and 100"},
+		{name: "zero cursor", query: "afterId=0", message: "afterId must be a positive integer"},
+		{name: "invalid cursor", query: "afterId=bad", message: "afterId must be a positive integer"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/users?"+test.query, nil)
+			got, err := ParsePageRequest(req)
+			if test.message != "" {
+				assertAppError(t, err, http.StatusBadRequest, test.message)
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("page request = %+v, want %+v", got, test.want)
+			}
+		})
+	}
 }
 
 func assertAppError(t *testing.T, err error, wantStatus int, wantMessage string) {

@@ -4,15 +4,18 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
+
+	"bridge-go/user-order-api/internal/platform/page"
 )
 
 var ErrNotFound = errors.New("order not found")
 
 type Repository interface {
 	Create(ctx context.Context, input CreateOrderRequest) (Order, error)
-	List(ctx context.Context) ([]Order, error)
+	List(ctx context.Context, request page.Request) (page.Result[Order], error)
 	FindByID(ctx context.Context, id int64) (Order, error)
 }
 
@@ -50,9 +53,9 @@ func (r *MemoryRepository) Create(ctx context.Context, input CreateOrderRequest)
 	return order, nil
 }
 
-func (r *MemoryRepository) List(ctx context.Context) ([]Order, error) {
+func (r *MemoryRepository) List(ctx context.Context, request page.Request) (page.Result[Order], error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return page.Result[Order]{}, err
 	}
 
 	r.mu.RLock()
@@ -60,13 +63,23 @@ func (r *MemoryRepository) List(ctx context.Context) ([]Order, error) {
 
 	orders := make([]Order, 0, len(r.orders))
 	for _, item := range r.orders {
-		orders = append(orders, item)
+		if item.ID > request.AfterID {
+			orders = append(orders, item)
+		}
 	}
 	slices.SortFunc(orders, func(a, b Order) int {
 		return int(a.ID - b.ID)
 	})
 
-	return orders, nil
+	return paginate(orders, request.Limit), nil
+}
+
+func paginate(items []Order, limit int) page.Result[Order] {
+	if len(items) <= limit {
+		return page.Result[Order]{Items: items}
+	}
+	items = items[:limit]
+	return page.Result[Order]{Items: items, NextCursor: strconv.FormatInt(items[len(items)-1].ID, 10)}
 }
 
 func (r *MemoryRepository) FindByID(ctx context.Context, id int64) (Order, error) {
