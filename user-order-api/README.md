@@ -6,6 +6,16 @@
 
 ## 运行
 
+最简单的本地启动方式：
+
+```bash
+./scripts/start-local.sh
+```
+
+脚本会启动本地 MySQL、设置 Compose 对应的默认 `MYSQL_DSN`，再运行 API。若需要连接其他数据库，可在启动前设置自己的 `MYSQL_DSN`。
+
+也可以手动执行：
+
 ```bash
 docker compose up -d
 export MYSQL_DSN='app:app_password@tcp(127.0.0.1:3307)/user_order_api?parseTime=true&charset=utf8mb4&loc=UTC'
