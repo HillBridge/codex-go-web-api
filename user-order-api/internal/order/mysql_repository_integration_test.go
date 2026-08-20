@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"bridge-go/user-order-api/internal/platform/database"
+	"bridge-go/user-order-api/internal/platform/testdb"
 	"bridge-go/user-order-api/internal/user"
 )
 
@@ -57,10 +58,7 @@ func TestMySQLRepositoryMapsMissingRecordsAndUsers(t *testing.T) {
 
 func openMySQLTestDatabase(t *testing.T) *sql.DB {
 	t.Helper()
-	dsn := os.Getenv("MYSQL_TEST_DSN")
-	if dsn == "" {
-		t.Skip("MYSQL_TEST_DSN is not set")
-	}
+	dsn := testdb.RequireDSN(t, os.Getenv("MYSQL_TEST_DSN"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

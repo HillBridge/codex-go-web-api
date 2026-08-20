@@ -54,6 +54,14 @@ curl http://localhost:8888/api/v1/health
 go test ./...
 ```
 
+MySQL 集成测试只允许使用独立的 `user_order_api_test` 数据库；测试会重置其中的表，绝不能把 `MYSQL_TEST_DSN` 指向开发库 `user_order_api`。首次运行或已有本地 MySQL 数据卷时，先创建测试库：
+
+```bash
+./scripts/setup-test-database.sh
+export MYSQL_TEST_DSN='app:app_password@tcp(127.0.0.1:3307)/user_order_api_test?parseTime=true&charset=utf8mb4&loc=UTC'
+go test ./...
+```
+
 ## OpenAPI 与 Postman
 
 - OpenAPI 3.0 接口契约：[docs/openapi.yaml](docs/openapi.yaml)
