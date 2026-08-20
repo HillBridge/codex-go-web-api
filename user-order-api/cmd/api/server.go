@@ -21,6 +21,8 @@ type application struct {
 	auditLogger *audit.AsyncLogger
 }
 
+const apiV1Prefix = "/api/v1"
+
 func newServer() *application {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	return newApplication(logger, user.NewMemoryRepository(), order.NewMemoryRepository())
@@ -35,8 +37,8 @@ func newApplication(logger *slog.Logger, userRepo user.Repository, orderRepo ord
 	orderService := order.NewService(orderRepo, userRepo, auditLogger)
 	orderHandler := order.NewHandler(orderService)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	apiMux := http.NewServeMux()
+	apiMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			httpx.WriteMethodNotAllowed(w, "GET")
 			return
@@ -44,13 +46,22 @@ func newApplication(logger *slog.Logger, userRepo user.Repository, orderRepo ord
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	userHandler.Register(mux)
-	orderHandler.Register(mux)
+	userHandler.Register(apiMux)
+	orderHandler.Register(apiMux)
+	apiMux.HandleFunc("/", routeNotFound)
+
+	mux := http.NewServeMux()
+	mux.Handle(apiV1Prefix+"/", http.StripPrefix(apiV1Prefix, apiMux))
+	mux.HandleFunc("/", routeNotFound)
 
 	return &application{
 		handler:     requestIDMiddleware(requestLogMiddleware(logger, recoveryMiddleware(logger, mux))),
 		auditLogger: auditLogger,
 	}
+}
+
+func routeNotFound(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteError(w, httpx.NotFoundCode("ROUTE_NOT_FOUND", "route not found"))
 }
 
 func (a *application) ServeHTTP(w http.ResponseWriter, r *http.Request) {

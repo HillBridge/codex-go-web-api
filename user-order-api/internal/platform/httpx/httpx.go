@@ -16,9 +16,19 @@ const MaxJSONBodyBytes int64 = 1 << 20
 
 type AppError struct {
 	Status  int
+	Code    string
 	Message string
 	Err     error
 }
+
+const (
+	CodeInvalidRequest        = "INVALID_REQUEST"
+	CodeNotFound              = "NOT_FOUND"
+	CodeInternalError         = "INTERNAL_ERROR"
+	CodeUnsupportedMediaType  = "UNSUPPORTED_MEDIA_TYPE"
+	CodeRequestEntityTooLarge = "REQUEST_ENTITY_TOO_LARGE"
+	CodeMethodNotAllowed      = "METHOD_NOT_ALLOWED"
+)
 
 func (e *AppError) Error() string {
 	if e.Err != nil {
@@ -32,27 +42,35 @@ func (e *AppError) Unwrap() error {
 }
 
 func BadRequest(message string) *AppError {
-	return &AppError{Status: http.StatusBadRequest, Message: message}
+	return BadRequestCode(CodeInvalidRequest, message)
+}
+
+func BadRequestCode(code, message string) *AppError {
+	return &AppError{Status: http.StatusBadRequest, Code: code, Message: message}
 }
 
 func NotFound(message string) *AppError {
-	return &AppError{Status: http.StatusNotFound, Message: message}
+	return NotFoundCode(CodeNotFound, message)
+}
+
+func NotFoundCode(code, message string) *AppError {
+	return &AppError{Status: http.StatusNotFound, Code: code, Message: message}
 }
 
 func Internal(message string, err error) *AppError {
-	return &AppError{Status: http.StatusInternalServerError, Message: message, Err: err}
+	return &AppError{Status: http.StatusInternalServerError, Code: CodeInternalError, Message: message, Err: err}
 }
 
 func UnsupportedMediaType(message string) *AppError {
-	return &AppError{Status: http.StatusUnsupportedMediaType, Message: message}
+	return &AppError{Status: http.StatusUnsupportedMediaType, Code: CodeUnsupportedMediaType, Message: message}
 }
 
 func RequestEntityTooLarge(message string) *AppError {
-	return &AppError{Status: http.StatusRequestEntityTooLarge, Message: message}
+	return &AppError{Status: http.StatusRequestEntityTooLarge, Code: CodeRequestEntityTooLarge, Message: message}
 }
 
 func MethodNotAllowed() *AppError {
-	return &AppError{Status: http.StatusMethodNotAllowed, Message: "method not allowed"}
+	return &AppError{Status: http.StatusMethodNotAllowed, Code: CodeMethodNotAllowed, Message: "method not allowed"}
 }
 
 func WriteJSON(w http.ResponseWriter, status int, value any) {
@@ -64,11 +82,16 @@ func WriteJSON(w http.ResponseWriter, status int, value any) {
 func WriteError(w http.ResponseWriter, err error) {
 	var appErr *AppError
 	if errors.As(err, &appErr) {
-		WriteJSON(w, appErr.Status, map[string]string{"error": appErr.Message})
+		WriteJSON(w, appErr.Status, errorResponse{Code: appErr.Code, Error: appErr.Message})
 		return
 	}
 
-	WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+	WriteJSON(w, http.StatusInternalServerError, errorResponse{Code: CodeInternalError, Error: "internal server error"})
+}
+
+type errorResponse struct {
+	Code  string `json:"code"`
+	Error string `json:"error"`
 }
 
 func WriteMethodNotAllowed(w http.ResponseWriter, allow string) {

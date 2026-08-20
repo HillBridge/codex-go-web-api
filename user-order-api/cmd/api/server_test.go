@@ -19,7 +19,7 @@ import (
 func TestUserAndOrderFlow(t *testing.T) {
 	server := newTestServer(t)
 
-	userBody := postJSON(t, server, "/users", map[string]any{
+	userBody := postJSON(t, server, "/api/v1/users", map[string]any{
 		"name":  "Ada",
 		"email": "ada@example.com",
 	}, http.StatusCreated)
@@ -34,7 +34,7 @@ func TestUserAndOrderFlow(t *testing.T) {
 		t.Fatalf("unexpected user: %+v", createdUser)
 	}
 
-	orderBody := postJSON(t, server, "/orders", map[string]any{
+	orderBody := postJSON(t, server, "/api/v1/orders", map[string]any{
 		"userId": createdUser.ID,
 		"amount": 2599,
 	}, http.StatusCreated)
@@ -50,17 +50,18 @@ func TestUserAndOrderFlow(t *testing.T) {
 		t.Fatalf("unexpected order: %+v", createdOrder)
 	}
 
-	get(t, server, "/users/1", http.StatusOK)
-	get(t, server, "/orders/1", http.StatusOK)
+	get(t, server, "/api/v1/users/1", http.StatusOK)
+	get(t, server, "/api/v1/orders/1", http.StatusOK)
 }
 
 func TestRejectsOrderForMissingUser(t *testing.T) {
 	server := newTestServer(t)
 
-	postJSON(t, server, "/orders", map[string]any{
+	body := postJSON(t, server, "/api/v1/orders", map[string]any{
 		"userId": 99,
 		"amount": 100,
 	}, http.StatusBadRequest)
+	assertErrorCode(t, body, "USER_NOT_FOUND")
 }
 
 func TestDuplicateEmailIsRejected(t *testing.T) {
@@ -70,16 +71,17 @@ func TestDuplicateEmailIsRejected(t *testing.T) {
 		"name":  "Ada",
 		"email": "ada@example.com",
 	}
-	postJSON(t, server, "/users", payload, http.StatusCreated)
-	postJSON(t, server, "/users", payload, http.StatusBadRequest)
+	postJSON(t, server, "/api/v1/users", payload, http.StatusCreated)
+	body := postJSON(t, server, "/api/v1/users", payload, http.StatusBadRequest)
+	assertErrorCode(t, body, "EMAIL_ALREADY_EXISTS")
 }
 
 func TestUsersListReturnsCursorPagination(t *testing.T) {
 	server := newTestServer(t)
-	postJSON(t, server, "/users", map[string]any{"name": "Ada", "email": "ada@example.com"}, http.StatusCreated)
-	postJSON(t, server, "/users", map[string]any{"name": "Grace", "email": "grace@example.com"}, http.StatusCreated)
+	postJSON(t, server, "/api/v1/users", map[string]any{"name": "Ada", "email": "ada@example.com"}, http.StatusCreated)
+	postJSON(t, server, "/api/v1/users", map[string]any{"name": "Grace", "email": "grace@example.com"}, http.StatusCreated)
 
-	body := get(t, server, "/users?limit=1", http.StatusOK)
+	body := get(t, server, "/api/v1/users?limit=1", http.StatusOK)
 	var response struct {
 		Items []struct {
 			ID int64 `json:"id"`
@@ -91,7 +93,8 @@ func TestUsersListReturnsCursorPagination(t *testing.T) {
 		t.Fatalf("list response = %+v, want first user and cursor 1", response)
 	}
 
-	get(t, server, "/users?limit=0", http.StatusBadRequest)
+	body = get(t, server, "/api/v1/users?limit=0", http.StatusBadRequest)
+	assertErrorCode(t, body, "INVALID_REQUEST")
 }
 
 func TestRequestIDMiddlewareAddsResponseRequestID(t *testing.T) {
@@ -139,14 +142,14 @@ func TestRecoveryMiddlewareReturnsJSONInternalServerError(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {
 		t.Fatalf("Content-Type = %q, want %q", got, "application/json")
 	}
-	if got := rec.Body.String(); got != "{\"error\":\"internal server error\"}\n" {
+	if got := rec.Body.String(); got != "{\"code\":\"INTERNAL_ERROR\",\"error\":\"internal server error\"}\n" {
 		t.Fatalf("body = %q, want internal error JSON", got)
 	}
 }
 
 func TestUsersMethodNotAllowedReturnsJSONAndAllowHeader(t *testing.T) {
 	server := newTestServer(t)
-	req := httptest.NewRequest(http.MethodPut, "/users", nil)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/users", nil)
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
@@ -160,7 +163,7 @@ func TestUsersMethodNotAllowedReturnsJSONAndAllowHeader(t *testing.T) {
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {
 		t.Fatalf("Content-Type = %q, want %q", got, "application/json")
 	}
-	if got := rec.Body.String(); got != "{\"error\":\"method not allowed\"}\n" {
+	if got := rec.Body.String(); got != "{\"code\":\"METHOD_NOT_ALLOWED\",\"error\":\"method not allowed\"}\n" {
 		t.Fatalf("body = %q, want method-not-allowed JSON", got)
 	}
 }
@@ -205,7 +208,7 @@ func TestApplicationUsesProvidedRepositories(t *testing.T) {
 		}
 	})
 
-	body := get(t, app, "/users/1", http.StatusOK)
+	body := get(t, app, "/api/v1/users/1", http.StatusOK)
 	var returned struct {
 		ID int64 `json:"id"`
 	}
@@ -213,6 +216,12 @@ func TestApplicationUsesProvidedRepositories(t *testing.T) {
 	if returned.ID != created.ID {
 		t.Fatalf("returned user ID = %d, want %d", returned.ID, created.ID)
 	}
+}
+
+func TestLegacyRoutesReturnVersionedRouteNotFoundError(t *testing.T) {
+	server := newTestServer(t)
+	body := get(t, server, "/users", http.StatusNotFound)
+	assertErrorCode(t, body, "ROUTE_NOT_FOUND")
 }
 
 func newTestServer(t *testing.T) *application {
@@ -269,5 +278,16 @@ func decodeBody(t *testing.T, body []byte, target any) {
 
 	if err := json.Unmarshal(body, target); err != nil {
 		t.Fatalf("decode response: %v; body = %s", err, string(body))
+	}
+}
+
+func assertErrorCode(t *testing.T, body []byte, want string) {
+	t.Helper()
+	var response struct {
+		Code string `json:"code"`
+	}
+	decodeBody(t, body, &response)
+	if response.Code != want {
+		t.Fatalf("error code = %q, want %q; body = %s", response.Code, want, body)
 	}
 }

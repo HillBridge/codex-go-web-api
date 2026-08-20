@@ -44,15 +44,15 @@ flowchart LR
 
 | 路由 | 方法 | 成功响应 |
 | --- | --- | --- |
-| `/health` | `GET` | `{ "status": "ok" }` |
-| `/users` | `POST` | 用户，`201` |
-| `/users` | `GET` | `{ "items": [...], "nextCursor": "..." }` |
-| `/users/:id` | `GET` | 用户 |
-| `/orders` | `POST` | 订单，`201` |
-| `/orders` | `GET` | `{ "items": [...], "nextCursor": "..." }` |
-| `/orders/:id` | `GET` | 订单 |
+| `/api/v1/health` | `GET` | `{ "status": "ok" }` |
+| `/api/v1/users` | `POST` | 用户，`201` |
+| `/api/v1/users` | `GET` | `{ "items": [...], "nextCursor": "..." }` |
+| `/api/v1/users/:id` | `GET` | 用户 |
+| `/api/v1/orders` | `POST` | 订单，`201` |
+| `/api/v1/orders` | `GET` | `{ "items": [...], "nextCursor": "..." }` |
+| `/api/v1/orders/:id` | `GET` | 订单 |
 
-列表接口接受 `limit`（默认 20，范围 1–100）和正整数 `afterId`。没有下一页时省略 `nextCursor`。
+列表接口接受 `limit`（默认 20，范围 1–100）和正整数 `afterId`。没有下一页时省略 `nextCursor`。错误响应为 `{ "code": "稳定错误码", "error": "人类可读文案" }`；金额是人民币分整数，时间是 UTC RFC 3339。
 
 ## 外部依赖
 

@@ -35,7 +35,7 @@ func (s *Service) Create(ctx context.Context, input CreateOrderRequest) (Order, 
 
 	if _, err := s.users.FindByID(ctx, input.UserID); err != nil {
 		if errors.Is(err, user.ErrNotFound) {
-			return Order{}, httpx.BadRequest("user does not exist")
+			return Order{}, httpx.BadRequestCode("USER_NOT_FOUND", "user does not exist")
 		}
 		return Order{}, httpx.Internal("failed to find user", fmt.Errorf("find user: %w", err))
 	}
@@ -43,7 +43,7 @@ func (s *Service) Create(ctx context.Context, input CreateOrderRequest) (Order, 
 	order, err := s.repo.Create(ctx, input)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
-			return Order{}, httpx.BadRequest("user does not exist")
+			return Order{}, httpx.BadRequestCode("USER_NOT_FOUND", "user does not exist")
 		}
 		return Order{}, httpx.Internal("failed to create order", fmt.Errorf("create order: %w", err))
 	}
@@ -64,7 +64,7 @@ func (s *Service) FindByID(ctx context.Context, id int64) (Order, error) {
 	order, err := s.repo.FindByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return Order{}, httpx.NotFound("order not found")
+			return Order{}, httpx.NotFoundCode("ORDER_NOT_FOUND", "order not found")
 		}
 		return Order{}, httpx.Internal("failed to find order", fmt.Errorf("find order: %w", err))
 	}

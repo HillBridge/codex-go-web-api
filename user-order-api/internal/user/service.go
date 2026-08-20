@@ -31,7 +31,7 @@ func (s *Service) Create(ctx context.Context, input CreateUserRequest) (User, er
 	user, err := s.repo.Create(ctx, input)
 	if err != nil {
 		if errors.Is(err, ErrEmailTaken) {
-			return User{}, httpx.BadRequest("email already exists")
+			return User{}, httpx.BadRequestCode("EMAIL_ALREADY_EXISTS", "email already exists")
 		}
 		return User{}, httpx.Internal("failed to create user", fmt.Errorf("create user: %w", err))
 	}
@@ -52,7 +52,7 @@ func (s *Service) FindByID(ctx context.Context, id int64) (User, error) {
 	user, err := s.repo.FindByID(ctx, id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
-			return User{}, httpx.NotFound("user not found")
+			return User{}, httpx.NotFoundCode("USER_NOT_FOUND", "user not found")
 		}
 		return User{}, httpx.Internal("failed to find user", fmt.Errorf("find user: %w", err))
 	}

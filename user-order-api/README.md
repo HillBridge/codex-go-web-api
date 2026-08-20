@@ -45,7 +45,7 @@ http://localhost:8888
 健康检查：
 
 ```bash
-curl http://localhost:8888/health
+curl http://localhost:8888/api/v1/health
 ```
 
 ## 测试
@@ -54,12 +54,19 @@ curl http://localhost:8888/health
 go test ./...
 ```
 
+## OpenAPI 与 Postman
+
+- OpenAPI 3.0 接口契约：[docs/openapi.yaml](docs/openapi.yaml)
+- Postman Collection：[docs/postman/user-order-api.postman_collection.json](docs/postman/user-order-api.postman_collection.json)
+
+在 Postman 点击 **Import**，选择该 Collection 文件即可。Collection 已内置 `baseUrl=http://localhost:8888/api/v1`；先调用 **Users / Create User**，它会自动保存返回的 `userId`，之后可直接调用 **Orders / Create Order**。
+
 ## API
 
 ### 创建用户
 
 ```bash
-curl -X POST http://localhost:8888/users \
+curl -X POST http://localhost:8888/api/v1/users \
   -H 'Content-Type: application/json' \
   -d '{"name":"Ada","email":"ada@example.com"}'
 ```
@@ -67,7 +74,7 @@ curl -X POST http://localhost:8888/users \
 ### 查询用户列表
 
 ```bash
-curl 'http://localhost:8888/users?limit=20'
+curl 'http://localhost:8888/api/v1/users?limit=20'
 ```
 
 列表响应使用游标分页：`limit` 默认为 20，范围 1–100；首个请求可省略 `afterId`，后续请求将返回的 `nextCursor` 作为 `afterId` 传回。没有下一页时不会出现 `nextCursor`。
@@ -79,29 +86,29 @@ curl 'http://localhost:8888/users?limit=20'
 ### 查询用户详情
 
 ```bash
-curl http://localhost:8888/users/1
+curl http://localhost:8888/api/v1/users/1
 ```
 
 ### 创建订单
 
 ```bash
-curl -X POST http://localhost:8888/orders \
+curl -X POST http://localhost:8888/api/v1/orders \
   -H 'Content-Type: application/json' \
   -d '{"userId":1,"amount":2599}'
 ```
 
-`amount` 使用整数表示最小货币单位，比如 2599 表示 25.99 元，避免浮点数金额误差。
+`amount` 使用人民币（CNY）分作为最小货币单位；例如 2599 表示 ¥25.99，避免浮点数金额误差。时间字段均为 UTC RFC 3339 格式。当前版本不支持其他币种。
 
 ### 查询订单列表
 
 ```bash
-curl 'http://localhost:8888/orders?limit=20'
+curl 'http://localhost:8888/api/v1/orders?limit=20'
 ```
 
 ### 查询订单详情
 
 ```bash
-curl http://localhost:8888/orders/1
+curl http://localhost:8888/api/v1/orders/1
 ```
 
 ## 项目结构
@@ -175,6 +182,14 @@ httpx.AppError
 ```
 
 service 层把底层错误翻译成 HTTP 友好的业务错误。
+
+所有错误响应均携带稳定的 `code` 与面向人类的 `error` 文案，例如：
+
+```json
+{"code":"USER_NOT_FOUND","error":"user does not exist"}
+```
+
+前端应依据 `code` 处理分支，而非依赖可能调整的 `error` 文案。
 
 ### context.Context
 
