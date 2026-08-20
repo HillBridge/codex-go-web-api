@@ -21,7 +21,43 @@ func NewMySQLRepository(db *sql.DB) Repository {
 	return &MySQLRepository{db: db}
 }
 
-func (r *MySQLRepository) Create(ctx context.Context, input CreateOrderRequest) (Order, error) {
+func (r *MySQLRepository) Create(ctx context.Context, input CreateOrderRequest) (Order, bool, error) {
+	if input.IdempotencyKey == "" {
+		item, err := r.insert(ctx, input)
+		return item, false, err
+	}
+
+	result, err := r.db.ExecContext(ctx,
+		"INSERT INTO orders (user_id, amount, status, idempotency_key, created_at) VALUES (?, ?, ?, ?, UTC_TIMESTAMP(6))",
+		input.UserID, input.Amount, StatusPending, input.IdempotencyKey,
+	)
+	if err != nil {
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1452 {
+			return Order{}, false, ErrUserNotFound
+		}
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			existing, findErr := r.findByIdempotencyKey(ctx, input.IdempotencyKey)
+			if findErr != nil {
+				return Order{}, false, findErr
+			}
+			if existing.UserID == input.UserID && existing.Amount == input.Amount {
+				return existing, true, nil
+			}
+			return Order{}, false, ErrIdempotencyConflict
+		}
+		return Order{}, false, fmt.Errorf("insert order: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return Order{}, false, fmt.Errorf("read inserted order ID: %w", err)
+	}
+	item, err := r.FindByID(ctx, id)
+	return item, false, err
+}
+
+func (r *MySQLRepository) insert(ctx context.Context, input CreateOrderRequest) (Order, error) {
 	result, err := r.db.ExecContext(ctx,
 		"INSERT INTO orders (user_id, amount, status, created_at) VALUES (?, ?, ?, UTC_TIMESTAMP(6))",
 		input.UserID, input.Amount, StatusPending,
@@ -33,7 +69,6 @@ func (r *MySQLRepository) Create(ctx context.Context, input CreateOrderRequest) 
 		}
 		return Order{}, fmt.Errorf("insert order: %w", err)
 	}
-
 	id, err := result.LastInsertId()
 	if err != nil {
 		return Order{}, fmt.Errorf("read inserted order ID: %w", err)
@@ -72,6 +107,44 @@ func (r *MySQLRepository) FindByID(ctx context.Context, id int64) (Order, error)
 	}
 	if err != nil {
 		return Order{}, fmt.Errorf("find order: %w", err)
+	}
+	return item, nil
+}
+
+func (r *MySQLRepository) Transition(ctx context.Context, id int64, target Status) (Order, bool, error) {
+	result, err := r.db.ExecContext(ctx,
+		"UPDATE orders SET status = ? WHERE id = ? AND status = ?",
+		target, id, StatusPending,
+	)
+	if err != nil {
+		return Order{}, false, fmt.Errorf("transition order: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return Order{}, false, fmt.Errorf("read transition result: %w", err)
+	}
+	item, err := r.FindByID(ctx, id)
+	if err != nil {
+		return Order{}, false, err
+	}
+	if changed > 0 {
+		return item, true, nil
+	}
+	if item.Status == target {
+		return item, false, nil
+	}
+	return Order{}, false, ErrInvalidState
+}
+
+func (r *MySQLRepository) findByIdempotencyKey(ctx context.Context, key string) (Order, error) {
+	item, err := scanOrder(r.db.QueryRowContext(ctx,
+		"SELECT id, user_id, amount, status, created_at FROM orders WHERE idempotency_key = ?", key,
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Order{}, ErrNotFound
+	}
+	if err != nil {
+		return Order{}, fmt.Errorf("find order by idempotency key: %w", err)
 	}
 	return item, nil
 }

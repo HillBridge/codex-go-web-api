@@ -3,6 +3,7 @@ package order
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"bridge-go/user-order-api/internal/platform/httpx"
@@ -45,12 +46,18 @@ func (h *Handler) orders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		order, err := h.service.Create(ctx, input)
+		_, input.IdempotencyKeyProvided = r.Header["Idempotency-Key"]
+		input.IdempotencyKey = r.Header.Get("Idempotency-Key")
+		order, replayed, err := h.service.Create(ctx, input)
 		if err != nil {
 			httpx.WriteError(w, err)
 			return
 		}
-		httpx.WriteJSON(w, http.StatusCreated, order)
+		status := http.StatusCreated
+		if replayed {
+			status = http.StatusOK
+		}
+		httpx.WriteJSON(w, status, order)
 	default:
 		httpx.WriteMethodNotAllowed(w, "GET, POST")
 	}
@@ -60,18 +67,46 @@ func (h *Handler) orderByID(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := requestContext(r)
 	defer cancel()
 
-	if r.Method != http.MethodGet {
-		httpx.WriteMethodNotAllowed(w, "GET")
-		return
-	}
-
-	id, err := httpx.PathID(r.URL.Path, "/orders/")
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/orders/"), "/")
+	parts := strings.Split(path, "/")
+	id, err := httpx.PathID("/orders/"+parts[0], "/orders/")
 	if err != nil {
 		httpx.WriteError(w, err)
 		return
 	}
 
-	order, err := h.service.FindByID(ctx, id)
+	if len(parts) == 1 {
+		if r.Method != http.MethodGet {
+			httpx.WriteMethodNotAllowed(w, "GET")
+			return
+		}
+		order, err := h.service.FindByID(ctx, id)
+		if err != nil {
+			httpx.WriteError(w, err)
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, order)
+		return
+	}
+	if len(parts) != 2 {
+		httpx.WriteError(w, httpx.NotFoundCode("ROUTE_NOT_FOUND", "route not found"))
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpx.WriteMethodNotAllowed(w, "POST")
+		return
+	}
+
+	var order Order
+	switch parts[1] {
+	case "pay":
+		order, err = h.service.Pay(ctx, id)
+	case "cancel":
+		order, err = h.service.Cancel(ctx, id)
+	default:
+		httpx.WriteError(w, httpx.NotFoundCode("ROUTE_NOT_FOUND", "route not found"))
+		return
+	}
 	if err != nil {
 		httpx.WriteError(w, err)
 		return

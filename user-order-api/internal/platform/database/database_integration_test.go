@@ -39,8 +39,18 @@ func TestApplyMigrationsIsIdempotentAndCreatesForeignKey(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 2 {
-		t.Fatalf("migration count = %d, want 2", migrations)
+	if migrations != 3 {
+		t.Fatalf("migration count = %d, want 3", migrations)
+	}
+	var idempotencyKeyColumns int
+	if err := db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_schema = DATABASE() AND table_name = 'orders' AND column_name = 'idempotency_key'`).Scan(&idempotencyKeyColumns); err != nil {
+		t.Fatal(err)
+	}
+	if idempotencyKeyColumns != 1 {
+		t.Fatalf("idempotency_key columns = %d, want 1", idempotencyKeyColumns)
 	}
 	for _, table := range []string{"users", "orders"} {
 		var count int

@@ -64,6 +64,65 @@ func TestRejectsOrderForMissingUser(t *testing.T) {
 	assertErrorCode(t, body, "USER_NOT_FOUND")
 }
 
+func TestOrderCreateReplaysIdempotencyKey(t *testing.T) {
+	server := newTestServer(t)
+	userBody := postJSON(t, server, "/api/v1/users", map[string]any{"name": "Ada", "email": "ada@example.com"}, http.StatusCreated)
+	var createdUser struct {
+		ID int64 `json:"id"`
+	}
+	decodeBody(t, userBody, &createdUser)
+
+	payload := map[string]any{"userId": createdUser.ID, "amount": 2599}
+	first := postJSONWithHeader(t, server, "/api/v1/orders", payload, "Idempotency-Key", "order-key-1", http.StatusCreated)
+	second := postJSONWithHeader(t, server, "/api/v1/orders", payload, "Idempotency-Key", " order-key-1 ", http.StatusOK)
+	var firstOrder, secondOrder struct {
+		ID int64 `json:"id"`
+	}
+	decodeBody(t, first, &firstOrder)
+	decodeBody(t, second, &secondOrder)
+	if firstOrder.ID != secondOrder.ID {
+		t.Fatalf("replayed ID = %d, want %d", secondOrder.ID, firstOrder.ID)
+	}
+}
+
+func TestOrderCreateRejectsBlankIdempotencyKey(t *testing.T) {
+	server := newTestServer(t)
+	userBody := postJSON(t, server, "/api/v1/users", map[string]any{"name": "Ada", "email": "ada@example.com"}, http.StatusCreated)
+	var createdUser struct {
+		ID int64 `json:"id"`
+	}
+	decodeBody(t, userBody, &createdUser)
+
+	body := postJSONWithHeader(t, server, "/api/v1/orders", map[string]any{"userId": createdUser.ID, "amount": 2599}, "Idempotency-Key", "   ", http.StatusBadRequest)
+	assertErrorCode(t, body, "INVALID_REQUEST")
+}
+
+func TestOrderLifecycleHTTPContract(t *testing.T) {
+	server := newTestServer(t)
+	userBody := postJSON(t, server, "/api/v1/users", map[string]any{"name": "Ada", "email": "ada@example.com"}, http.StatusCreated)
+	var createdUser struct {
+		ID int64 `json:"id"`
+	}
+	decodeBody(t, userBody, &createdUser)
+	orderBody := postJSON(t, server, "/api/v1/orders", map[string]any{"userId": createdUser.ID, "amount": 2599}, http.StatusCreated)
+	var createdOrder struct {
+		ID int64 `json:"id"`
+	}
+	decodeBody(t, orderBody, &createdOrder)
+
+	paid := postJSON(t, server, "/api/v1/orders/1/pay", map[string]any{}, http.StatusOK)
+	var paidOrder struct {
+		Status string `json:"status"`
+	}
+	decodeBody(t, paid, &paidOrder)
+	if paidOrder.Status != "paid" {
+		t.Fatalf("paid status = %q, want paid", paidOrder.Status)
+	}
+	postJSON(t, server, "/api/v1/orders/1/pay", map[string]any{}, http.StatusOK)
+	body := postJSON(t, server, "/api/v1/orders/1/cancel", map[string]any{}, http.StatusConflict)
+	assertErrorCode(t, body, "INVALID_ORDER_STATE")
+}
+
 func TestDuplicateEmailIsRejected(t *testing.T) {
 	server := newTestServer(t)
 
@@ -238,6 +297,10 @@ func newTestServer(t *testing.T) *application {
 }
 
 func postJSON(t *testing.T, handler http.Handler, path string, payload map[string]any, wantStatus int) []byte {
+	return postJSONWithHeader(t, handler, path, payload, "", "", wantStatus)
+}
+
+func postJSONWithHeader(t *testing.T, handler http.Handler, path string, payload map[string]any, header, value string, wantStatus int) []byte {
 	t.Helper()
 
 	body, err := json.Marshal(payload)
@@ -247,6 +310,9 @@ func postJSON(t *testing.T, handler http.Handler, path string, payload map[strin
 
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	if header != "" {
+		req.Header.Set(header, value)
+	}
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)

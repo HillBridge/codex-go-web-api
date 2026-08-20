@@ -91,6 +91,15 @@ paths:
           $ref: '#/components/responses/InternalServerError'
     post:
       summary: 创建订单
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: 可选的创建幂等键；去除首尾空白后不能为空，最长 255 个字符。同键同 userId/amount 返回首次创建的订单。
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
       requestBody:
         required: true
         content:
@@ -98,6 +107,12 @@ paths:
             schema:
               $ref: '#/components/schemas/CreateOrderRequest'
       responses:
+        '200':
+          description: 幂等重放成功，返回首次创建的订单
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
         '201':
           description: 创建成功
           content:
@@ -108,6 +123,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
+        '409':
+          $ref: '#/components/responses/IdempotencyKeyConflict'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /orders/{id}:
@@ -126,6 +143,46 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/OrderNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /orders/{id}/pay:
+    post:
+      summary: 确认订单支付
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: 支付成功，或订单已是 paid 状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/InvalidOrderState'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /orders/{id}/cancel:
+    post:
+      summary: 取消订单
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: 取消成功，或订单已是 cancelled 状态
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/OrderNotFound'
+        '409':
+          $ref: '#/components/responses/InvalidOrderState'
         '500':
           $ref: '#/components/responses/InternalServerError'
 components:
@@ -276,6 +333,18 @@ components:
             $ref: '#/components/schemas/Error'
     OrderNotFound:
       description: 订单不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    IdempotencyKeyConflict:
+      description: 幂等键已被不同的创建请求使用，错误码为 IDEMPOTENCY_KEY_CONFLICT
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InvalidOrderState:
+      description: 订单当前状态不允许该操作，错误码为 INVALID_ORDER_STATE
       content:
         application/json:
           schema:

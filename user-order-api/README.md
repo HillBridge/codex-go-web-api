@@ -67,7 +67,7 @@ go test ./...
 - OpenAPI 3.0 接口契约：[docs/openapi.yaml](docs/openapi.yaml)
 - Postman Collection：[docs/postman/user-order-api.postman_collection.json](docs/postman/user-order-api.postman_collection.json)
 
-在 Postman 点击 **Import**，选择该 Collection 文件即可。Collection 已内置 `baseUrl=http://localhost:8888/api/v1`；先调用 **Users / Create User**，它会自动保存返回的 `userId`，之后可直接调用 **Orders / Create Order**。
+在 Postman 点击 **Import**，选择该 Collection 文件即可。Collection 已内置 `baseUrl=http://localhost:8888/api/v1`；先调用 **Users / Create User**，它会自动保存返回的 `userId`，随后 **Orders / Create Order** 会生成并保存幂等键和 `orderId`。紧接着调用 **Replay Create Order** 可以验证网络重试不会重复创建订单；再调用 **Pay Order** 或 **Cancel Order**。
 
 ## API
 
@@ -102,10 +102,29 @@ curl http://localhost:8888/api/v1/users/1
 ```bash
 curl -X POST http://localhost:8888/api/v1/orders \
   -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: create-order-20260820-001' \
   -d '{"userId":1,"amount":2599}'
 ```
 
 `amount` 使用人民币（CNY）分作为最小货币单位；例如 2599 表示 ¥25.99，避免浮点数金额误差。时间字段均为 UTC RFC 3339 格式。当前版本不支持其他币种。
+
+`Idempotency-Key` 是可选请求头。传入后，服务会去除首尾空白，并要求其长度为 1–255；同一个 key 携带相同 `userId` 与 `amount` 重试时返回同一订单及 `200`，携带不同参数时返回 `409 IDEMPOTENCY_KEY_CONFLICT`。不传该头时，每次请求都会创建新订单。
+
+### 订单状态机
+
+新订单状态为 `pending`，仅允许如下流转：
+
+```text
+pending --支付--> paid
+pending --取消--> cancelled
+```
+
+`paid` 与 `cancelled` 均为终态。重复执行同一个动作会返回当前订单和 `200`；对已支付订单取消、或对已取消订单支付，会返回 `409 INVALID_ORDER_STATE`。
+
+```bash
+curl -X POST http://localhost:8888/api/v1/orders/1/pay
+curl -X POST http://localhost:8888/api/v1/orders/1/cancel
+```
 
 ### 查询订单列表
 

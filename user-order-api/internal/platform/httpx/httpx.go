@@ -57,6 +57,10 @@ func NotFoundCode(code, message string) *AppError {
 	return &AppError{Status: http.StatusNotFound, Code: code, Message: message}
 }
 
+func ConflictCode(code, message string) *AppError {
+	return &AppError{Status: http.StatusConflict, Code: code, Message: message}
+}
+
 func Internal(message string, err error) *AppError {
 	return &AppError{Status: http.StatusInternalServerError, Code: CodeInternalError, Message: message, Err: err}
 }

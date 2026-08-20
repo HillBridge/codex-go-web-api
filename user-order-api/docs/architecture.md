@@ -35,8 +35,8 @@ flowchart LR
 ## 分层边界
 
 - Handler 只处理 HTTP、请求超时、分页参数与 JSON 响应。
-- Service 处理参数校验、业务规则及领域错误到 `httpx.AppError` 的转换。
-- Repository 接口隔离存储实现；MySQL 仓储使用 `ExecContext`、`QueryRowContext`/`QueryContext`，内存实现仅服务测试。
+- Service 处理参数校验、业务规则及领域错误到 `httpx.AppError` 的转换。订单服务还负责状态机和仅在实际变化时写入审计事件。
+- Repository 接口隔离存储实现；MySQL 仓储使用 `ExecContext`、`QueryRowContext`/`QueryContext`，内存实现仅服务测试。订单创建以 `orders.idempotency_key` 的唯一约束防止并发重试重复写入；状态流转以 `WHERE status = 'pending'` 的条件更新保证原子性。
 - `order.Service` 通过 `UserFinder`（生产中为用户仓储）确认用户存在；外键冲突也会被转换为客户端可理解的“用户不存在”。
 - `page.Request` 与 `page.Result[T]` 是存储无关的游标分页契约。查询按 `id ASC`，使用 `afterId` 和多取一条记录生成 `nextCursor`。
 
@@ -48,11 +48,13 @@ flowchart LR
 | `/api/v1/users` | `POST` | 用户，`201` |
 | `/api/v1/users` | `GET` | `{ "items": [...], "nextCursor": "..." }` |
 | `/api/v1/users/:id` | `GET` | 用户 |
-| `/api/v1/orders` | `POST` | 订单，`201` |
+| `/api/v1/orders` | `POST` | 新建订单 `201`；同幂等键重放 `200` |
 | `/api/v1/orders` | `GET` | `{ "items": [...], "nextCursor": "..." }` |
 | `/api/v1/orders/:id` | `GET` | 订单 |
+| `/api/v1/orders/:id/pay` | `POST` | 支付后的订单，`200` |
+| `/api/v1/orders/:id/cancel` | `POST` | 取消后的订单，`200` |
 
-列表接口接受 `limit`（默认 20，范围 1–100）和正整数 `afterId`。没有下一页时省略 `nextCursor`。错误响应为 `{ "code": "稳定错误码", "error": "人类可读文案" }`；金额是人民币分整数，时间是 UTC RFC 3339。
+列表接口接受 `limit`（默认 20，范围 1–100）和正整数 `afterId`。没有下一页时省略 `nextCursor`。创建订单可选 `Idempotency-Key` 请求头：同键同参数重试返回首次订单，冲突返回 `IDEMPOTENCY_KEY_CONFLICT`。状态机只允许 `pending -> paid` 或 `pending -> cancelled`，跨终态操作返回 `INVALID_ORDER_STATE`。错误响应为 `{ "code": "稳定错误码", "error": "人类可读文案" }`；金额是人民币分整数，时间是 UTC RFC 3339。
 
 ## 外部依赖
 

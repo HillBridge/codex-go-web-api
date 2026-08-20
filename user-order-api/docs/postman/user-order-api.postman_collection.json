@@ -16,6 +16,10 @@
     {
       "key": "orderId",
       "value": "1"
+    },
+    {
+      "key": "idempotencyKey",
+      "value": ""
     }
   ],
   "item": [
@@ -70,6 +74,14 @@
           "name": "Create Order",
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('order-{{$guid}}'));"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "exec": [
@@ -81,7 +93,37 @@
           ],
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": {{userId}},\n  \"amount\": 2599\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}/orders"
+          }
+        },
+        {
+          "name": "Replay Create Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('returns the same order', () => pm.expect(pm.response.json().id).to.eql(Number(pm.collectionVariables.get('orderId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"userId\": {{userId}},\n  \"amount\": 2599\n}",
@@ -97,6 +139,14 @@
         {
           "name": "Get Order by ID",
           "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{orderId}}" }
+        },
+        {
+          "name": "Pay Order",
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{orderId}}/pay" }
+        },
+        {
+          "name": "Cancel Order",
+          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{orderId}}/cancel" }
         }
       ]
     }

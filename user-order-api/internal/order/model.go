@@ -19,6 +19,8 @@ type Order struct {
 }
 
 type CreateOrderRequest struct {
-	UserID int64 `json:"userId"`
-	Amount int64 `json:"amount"`
+	UserID                 int64  `json:"userId"`
+	Amount                 int64  `json:"amount"`
+	IdempotencyKey         string `json:"-"`
+	IdempotencyKeyProvided bool   `json:"-"`
 }
