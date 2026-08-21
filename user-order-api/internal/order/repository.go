@@ -20,6 +20,7 @@ var (
 type Repository interface {
 	Create(ctx context.Context, input CreateOrderRequest) (Order, bool, error)
 	List(ctx context.Context, request page.Request) (page.Result[Order], error)
+	ListByUserID(ctx context.Context, userID int64, request page.Request) (page.Result[Order], error)
 	FindByID(ctx context.Context, id int64) (Order, error)
 	Transition(ctx context.Context, id int64, target Status) (Order, bool, error)
 }
@@ -97,6 +98,14 @@ func (r *MemoryRepository) Transition(ctx context.Context, id int64, target Stat
 }
 
 func (r *MemoryRepository) List(ctx context.Context, request page.Request) (page.Result[Order], error) {
+	return r.list(ctx, request, func(Order) bool { return true })
+}
+
+func (r *MemoryRepository) ListByUserID(ctx context.Context, userID int64, request page.Request) (page.Result[Order], error) {
+	return r.list(ctx, request, func(item Order) bool { return item.UserID == userID })
+}
+
+func (r *MemoryRepository) list(ctx context.Context, request page.Request, include func(Order) bool) (page.Result[Order], error) {
 	if err := ctx.Err(); err != nil {
 		return page.Result[Order]{}, err
 	}
@@ -106,7 +115,7 @@ func (r *MemoryRepository) List(ctx context.Context, request page.Request) (page
 
 	orders := make([]Order, 0, len(r.orders))
 	for _, item := range r.orders {
-		if item.ID > request.AfterID {
+		if item.ID > request.AfterID && include(item) {
 			orders = append(orders, item)
 		}
 	}

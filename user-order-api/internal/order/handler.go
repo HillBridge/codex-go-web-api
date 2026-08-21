@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"bridge-go/user-order-api/internal/platform/httpx"
+	"bridge-go/user-order-api/internal/platform/page"
+	"bridge-go/user-order-api/internal/platform/principal"
 )
 
 type Handler struct {
@@ -25,6 +27,11 @@ func (h *Handler) Register(mux *http.ServeMux) {
 func (h *Handler) orders(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := requestContext(r)
 	defer cancel()
+	currentPrincipal, ok := principal.FromContext(ctx)
+	if !ok {
+		httpx.WriteError(w, httpx.UnauthorizedCode("UNAUTHENTICATED", "unauthenticated"))
+		return
+	}
 
 	switch r.Method {
 	case http.MethodGet:
@@ -33,7 +40,12 @@ func (h *Handler) orders(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, err)
 			return
 		}
-		orders, err := h.service.List(ctx, request)
+		var orders page.Result[Order]
+		if isAdmin(currentPrincipal) {
+			orders, err = h.service.List(ctx, request)
+		} else {
+			orders, err = h.service.ListByUserID(ctx, currentPrincipal.UserID, request)
+		}
 		if err != nil {
 			httpx.WriteError(w, err)
 			return
@@ -43,6 +55,13 @@ func (h *Handler) orders(w http.ResponseWriter, r *http.Request) {
 		var input CreateOrderRequest
 		if err := httpx.DecodeJSON(w, r, &input); err != nil {
 			httpx.WriteError(w, err)
+			return
+		}
+		if input.UserID == 0 && !isAdmin(currentPrincipal) {
+			input.UserID = currentPrincipal.UserID
+		}
+		if !canAccess(currentPrincipal, input.UserID) {
+			httpx.WriteError(w, forbidden())
 			return
 		}
 
@@ -66,6 +85,11 @@ func (h *Handler) orders(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) orderByID(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := requestContext(r)
 	defer cancel()
+	currentPrincipal, ok := principal.FromContext(ctx)
+	if !ok {
+		httpx.WriteError(w, httpx.UnauthorizedCode("UNAUTHENTICATED", "unauthenticated"))
+		return
+	}
 
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/orders/"), "/")
 	parts := strings.Split(path, "/")
@@ -85,6 +109,10 @@ func (h *Handler) orderByID(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, err)
 			return
 		}
+		if !canAccess(currentPrincipal, order.UserID) {
+			httpx.WriteError(w, forbidden())
+			return
+		}
 		httpx.WriteJSON(w, http.StatusOK, order)
 		return
 	}
@@ -94,6 +122,15 @@ func (h *Handler) orderByID(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		httpx.WriteMethodNotAllowed(w, "POST")
+		return
+	}
+	existing, err := h.service.FindByID(ctx, id)
+	if err != nil {
+		httpx.WriteError(w, err)
+		return
+	}
+	if !canAccess(currentPrincipal, existing.UserID) {
+		httpx.WriteError(w, forbidden())
 		return
 	}
 
@@ -113,6 +150,14 @@ func (h *Handler) orderByID(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, order)
 }
+
+func canAccess(principal principal.Principal, userID int64) bool {
+	return isAdmin(principal) || principal.UserID == userID
+}
+
+func isAdmin(value principal.Principal) bool { return principal.IsAdmin(value) }
+
+func forbidden() error { return httpx.ForbiddenCode("FORBIDDEN", "insufficient permissions") }
 
 func requestContext(r *http.Request) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(r.Context(), 2*time.Second)

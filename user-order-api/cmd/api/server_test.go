@@ -8,36 +8,27 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"bridge-go/user-order-api/internal/auth"
 	"bridge-go/user-order-api/internal/order"
+	"bridge-go/user-order-api/internal/platform/database"
+	"bridge-go/user-order-api/internal/platform/testdb"
 	"bridge-go/user-order-api/internal/user"
 )
 
 func TestUserAndOrderFlow(t *testing.T) {
 	server := newTestServer(t)
+	accessToken, userID := registerAccessToken(t, server, "ada@example.com")
 
-	userBody := postJSON(t, server, "/api/v1/users", map[string]any{
-		"name":  "Ada",
-		"email": "ada@example.com",
-	}, http.StatusCreated)
-
-	var createdUser struct {
-		ID    int64  `json:"id"`
-		Name  string `json:"name"`
-		Email string `json:"email"`
-	}
-	decodeBody(t, userBody, &createdUser)
-	if createdUser.ID != 1 || createdUser.Email != "ada@example.com" {
-		t.Fatalf("unexpected user: %+v", createdUser)
-	}
-
-	orderBody := postJSON(t, server, "/api/v1/orders", map[string]any{
-		"userId": createdUser.ID,
+	orderBody := postJSONWithHeader(t, server, "/api/v1/orders", map[string]any{
+		"userId": userID,
 		"amount": 2599,
-	}, http.StatusCreated)
+	}, "Authorization", "Bearer "+accessToken, http.StatusCreated)
 
 	var createdOrder struct {
 		ID     int64  `json:"id"`
@@ -46,35 +37,21 @@ func TestUserAndOrderFlow(t *testing.T) {
 		Status string `json:"status"`
 	}
 	decodeBody(t, orderBody, &createdOrder)
-	if createdOrder.ID != 1 || createdOrder.UserID != createdUser.ID || createdOrder.Status != "pending" {
+	if createdOrder.ID != 1 || createdOrder.UserID != userID || createdOrder.Status != "pending" {
 		t.Fatalf("unexpected order: %+v", createdOrder)
 	}
 
-	get(t, server, "/api/v1/users/1", http.StatusOK)
-	get(t, server, "/api/v1/orders/1", http.StatusOK)
-}
-
-func TestRejectsOrderForMissingUser(t *testing.T) {
-	server := newTestServer(t)
-
-	body := postJSON(t, server, "/api/v1/orders", map[string]any{
-		"userId": 99,
-		"amount": 100,
-	}, http.StatusBadRequest)
-	assertErrorCode(t, body, "USER_NOT_FOUND")
+	getWithHeader(t, server, "/api/v1/users/1", "Authorization", "Bearer "+accessToken, http.StatusOK)
+	getWithHeader(t, server, "/api/v1/orders/1", "Authorization", "Bearer "+accessToken, http.StatusOK)
 }
 
 func TestOrderCreateReplaysIdempotencyKey(t *testing.T) {
 	server := newTestServer(t)
-	userBody := postJSON(t, server, "/api/v1/users", map[string]any{"name": "Ada", "email": "ada@example.com"}, http.StatusCreated)
-	var createdUser struct {
-		ID int64 `json:"id"`
-	}
-	decodeBody(t, userBody, &createdUser)
+	accessToken, userID := registerAccessToken(t, server, "ada@example.com")
 
-	payload := map[string]any{"userId": createdUser.ID, "amount": 2599}
-	first := postJSONWithHeader(t, server, "/api/v1/orders", payload, "Idempotency-Key", "order-key-1", http.StatusCreated)
-	second := postJSONWithHeader(t, server, "/api/v1/orders", payload, "Idempotency-Key", " order-key-1 ", http.StatusOK)
+	payload := map[string]any{"userId": userID, "amount": 2599}
+	first := postJSONWithHeaders(t, server, "/api/v1/orders", payload, map[string]string{"Authorization": "Bearer " + accessToken, "Idempotency-Key": "order-key-1"}, http.StatusCreated)
+	second := postJSONWithHeaders(t, server, "/api/v1/orders", payload, map[string]string{"Authorization": "Bearer " + accessToken, "Idempotency-Key": " order-key-1 "}, http.StatusOK)
 	var firstOrder, secondOrder struct {
 		ID int64 `json:"id"`
 	}
@@ -87,30 +64,22 @@ func TestOrderCreateReplaysIdempotencyKey(t *testing.T) {
 
 func TestOrderCreateRejectsBlankIdempotencyKey(t *testing.T) {
 	server := newTestServer(t)
-	userBody := postJSON(t, server, "/api/v1/users", map[string]any{"name": "Ada", "email": "ada@example.com"}, http.StatusCreated)
-	var createdUser struct {
-		ID int64 `json:"id"`
-	}
-	decodeBody(t, userBody, &createdUser)
+	accessToken, userID := registerAccessToken(t, server, "ada@example.com")
 
-	body := postJSONWithHeader(t, server, "/api/v1/orders", map[string]any{"userId": createdUser.ID, "amount": 2599}, "Idempotency-Key", "   ", http.StatusBadRequest)
+	body := postJSONWithHeaders(t, server, "/api/v1/orders", map[string]any{"userId": userID, "amount": 2599}, map[string]string{"Authorization": "Bearer " + accessToken, "Idempotency-Key": "   "}, http.StatusBadRequest)
 	assertErrorCode(t, body, "INVALID_REQUEST")
 }
 
 func TestOrderLifecycleHTTPContract(t *testing.T) {
 	server := newTestServer(t)
-	userBody := postJSON(t, server, "/api/v1/users", map[string]any{"name": "Ada", "email": "ada@example.com"}, http.StatusCreated)
-	var createdUser struct {
-		ID int64 `json:"id"`
-	}
-	decodeBody(t, userBody, &createdUser)
-	orderBody := postJSON(t, server, "/api/v1/orders", map[string]any{"userId": createdUser.ID, "amount": 2599}, http.StatusCreated)
+	accessToken, userID := registerAccessToken(t, server, "ada@example.com")
+	orderBody := postJSONWithHeader(t, server, "/api/v1/orders", map[string]any{"userId": userID, "amount": 2599}, "Authorization", "Bearer "+accessToken, http.StatusCreated)
 	var createdOrder struct {
 		ID int64 `json:"id"`
 	}
 	decodeBody(t, orderBody, &createdOrder)
 
-	paid := postJSON(t, server, "/api/v1/orders/1/pay", map[string]any{}, http.StatusOK)
+	paid := postJSONWithHeader(t, server, "/api/v1/orders/1/pay", map[string]any{}, "Authorization", "Bearer "+accessToken, http.StatusOK)
 	var paidOrder struct {
 		Status string `json:"status"`
 	}
@@ -118,29 +87,31 @@ func TestOrderLifecycleHTTPContract(t *testing.T) {
 	if paidOrder.Status != "paid" {
 		t.Fatalf("paid status = %q, want paid", paidOrder.Status)
 	}
-	postJSON(t, server, "/api/v1/orders/1/pay", map[string]any{}, http.StatusOK)
-	body := postJSON(t, server, "/api/v1/orders/1/cancel", map[string]any{}, http.StatusConflict)
+	postJSONWithHeader(t, server, "/api/v1/orders/1/pay", map[string]any{}, "Authorization", "Bearer "+accessToken, http.StatusOK)
+	body := postJSONWithHeader(t, server, "/api/v1/orders/1/cancel", map[string]any{}, "Authorization", "Bearer "+accessToken, http.StatusConflict)
 	assertErrorCode(t, body, "INVALID_ORDER_STATE")
 }
 
 func TestDuplicateEmailIsRejected(t *testing.T) {
 	server := newTestServer(t)
-
-	payload := map[string]any{
-		"name":  "Ada",
-		"email": "ada@example.com",
+	registerAccessToken(t, server, "ada@example.com")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(`{"name":"Ada","email":"ada@example.com","password":"correct-password"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("duplicate register status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	postJSON(t, server, "/api/v1/users", payload, http.StatusCreated)
-	body := postJSON(t, server, "/api/v1/users", payload, http.StatusBadRequest)
+	body := rec.Body.Bytes()
 	assertErrorCode(t, body, "EMAIL_ALREADY_EXISTS")
 }
 
 func TestUsersListReturnsCursorPagination(t *testing.T) {
-	server := newTestServer(t)
-	postJSON(t, server, "/api/v1/users", map[string]any{"name": "Ada", "email": "ada@example.com"}, http.StatusCreated)
-	postJSON(t, server, "/api/v1/users", map[string]any{"name": "Grace", "email": "grace@example.com"}, http.StatusCreated)
+	server, adminToken := newTestServerWithBootstrapAdmin(t)
+	postJSONWithHeader(t, server, "/api/v1/users", map[string]any{"name": "Ada", "email": "ada@example.com"}, "Authorization", "Bearer "+adminToken, http.StatusCreated)
+	postJSONWithHeader(t, server, "/api/v1/users", map[string]any{"name": "Grace", "email": "grace@example.com"}, "Authorization", "Bearer "+adminToken, http.StatusCreated)
 
-	body := get(t, server, "/api/v1/users?limit=1", http.StatusOK)
+	body := getWithHeader(t, server, "/api/v1/users?limit=1", "Authorization", "Bearer "+adminToken, http.StatusOK)
 	var response struct {
 		Items []struct {
 			ID int64 `json:"id"`
@@ -148,11 +119,11 @@ func TestUsersListReturnsCursorPagination(t *testing.T) {
 		NextCursor string `json:"nextCursor"`
 	}
 	decodeBody(t, body, &response)
-	if len(response.Items) != 1 || response.Items[0].ID != 1 || response.NextCursor != "1" {
+	if len(response.Items) != 1 || response.NextCursor != "1" {
 		t.Fatalf("list response = %+v, want first user and cursor 1", response)
 	}
 
-	body = get(t, server, "/api/v1/users?limit=0", http.StatusBadRequest)
+	body = getWithHeader(t, server, "/api/v1/users?limit=0", "Authorization", "Bearer "+adminToken, http.StatusBadRequest)
 	assertErrorCode(t, body, "INVALID_REQUEST")
 }
 
@@ -208,7 +179,9 @@ func TestRecoveryMiddlewareReturnsJSONInternalServerError(t *testing.T) {
 
 func TestUsersMethodNotAllowedReturnsJSONAndAllowHeader(t *testing.T) {
 	server := newTestServer(t)
+	accessToken, _ := registerAccessToken(t, server, "ada@example.com")
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/users", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
@@ -233,6 +206,8 @@ func TestApplicationCloseDrainsAuditEvents(t *testing.T) {
 		slog.New(slog.NewTextHandler(&output, nil)),
 		user.NewMemoryRepository(),
 		order.NewMemoryRepository(),
+		newMemoryAuthService(user.NewMemoryRepository()),
+		false,
 	)
 	app.auditLogger.Record(context.Background(), "order.created", map[string]any{"orderID": int64(1)})
 
@@ -254,10 +229,16 @@ func TestApplicationUsesProvidedRepositories(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	authService := newMemoryAuthService(userRepo)
+	if _, err := authService.BootstrapAdmin(context.Background(), "admin@example.com", "correct-password"); err != nil {
+		t.Fatal(err)
+	}
 	app := newApplication(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		userRepo,
 		order.NewMemoryRepository(),
+		authService,
+		false,
 	)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -267,7 +248,8 @@ func TestApplicationUsesProvidedRepositories(t *testing.T) {
 		}
 	})
 
-	body := get(t, app, "/api/v1/users/1", http.StatusOK)
+	accessToken := loginAccessToken(t, app, "admin@example.com", "correct-password")
+	body := getWithHeader(t, app, "/api/v1/users/1", "Authorization", "Bearer "+accessToken, http.StatusOK)
 	var returned struct {
 		ID int64 `json:"id"`
 	}
@@ -283,6 +265,182 @@ func TestLegacyRoutesReturnVersionedRouteNotFoundError(t *testing.T) {
 	assertErrorCode(t, body, "ROUTE_NOT_FOUND")
 }
 
+func TestProtectedRoutesRejectMissingAccessToken(t *testing.T) {
+	server := newTestServer(t)
+	body := get(t, server, "/api/v1/users", http.StatusUnauthorized)
+	assertErrorCode(t, body, "UNAUTHENTICATED")
+}
+
+func TestAuthenticatedCustomerCanCreateOrderForOwnUser(t *testing.T) {
+	server := newTestServer(t)
+	accessToken, userID := registerAccessToken(t, server, "ada@example.com")
+
+	body := postJSONWithHeader(t, server, "/api/v1/orders", map[string]any{"userId": userID, "amount": 2599}, "Authorization", "Bearer "+accessToken, http.StatusCreated)
+	var created struct {
+		UserID int64 `json:"userId"`
+	}
+	decodeBody(t, body, &created)
+	if created.UserID != userID {
+		t.Fatalf("order user ID = %d, want %d", created.UserID, userID)
+	}
+}
+
+func TestCustomerOrderCreateDefaultsUserIDToCurrentIdentity(t *testing.T) {
+	server := newTestServer(t)
+	accessToken, userID := registerAccessToken(t, server, "ada@example.com")
+	body := postJSONWithHeader(t, server, "/api/v1/orders", map[string]any{"amount": 2599}, "Authorization", "Bearer "+accessToken, http.StatusCreated)
+	var created struct {
+		UserID int64 `json:"userId"`
+	}
+	decodeBody(t, body, &created)
+	if created.UserID != userID {
+		t.Fatalf("order user ID = %d, want %d", created.UserID, userID)
+	}
+}
+
+func TestCustomerCannotReadAnotherCustomersOrder(t *testing.T) {
+	server := newTestServer(t)
+	adaToken, adaID := registerAccessToken(t, server, "ada@example.com")
+	orderBody := postJSONWithHeader(t, server, "/api/v1/orders", map[string]any{"userId": adaID, "amount": 2599}, "Authorization", "Bearer "+adaToken, http.StatusCreated)
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	decodeBody(t, orderBody, &created)
+	graceToken, _ := registerAccessToken(t, server, "grace@example.com")
+
+	body := getWithHeader(t, server, "/api/v1/orders/"+strconv.FormatInt(created.ID, 10), "Authorization", "Bearer "+graceToken, http.StatusForbidden)
+	assertErrorCode(t, body, "FORBIDDEN")
+}
+
+func TestCustomerCannotCreateOrderForAnotherCustomer(t *testing.T) {
+	server := newTestServer(t)
+	adaToken, _ := registerAccessToken(t, server, "ada@example.com")
+	_, graceID := registerAccessToken(t, server, "grace@example.com")
+
+	body := postJSONWithHeader(t, server, "/api/v1/orders", map[string]any{"userId": graceID, "amount": 2599}, "Authorization", "Bearer "+adaToken, http.StatusForbidden)
+	assertErrorCode(t, body, "FORBIDDEN")
+}
+
+func TestCustomerOrderListOnlyIncludesOwnOrders(t *testing.T) {
+	server := newTestServer(t)
+	adaToken, adaID := registerAccessToken(t, server, "ada@example.com")
+	graceToken, graceID := registerAccessToken(t, server, "grace@example.com")
+	postJSONWithHeader(t, server, "/api/v1/orders", map[string]any{"userId": adaID, "amount": 100}, "Authorization", "Bearer "+adaToken, http.StatusCreated)
+	postJSONWithHeader(t, server, "/api/v1/orders", map[string]any{"userId": graceID, "amount": 200}, "Authorization", "Bearer "+graceToken, http.StatusCreated)
+
+	body := getWithHeader(t, server, "/api/v1/orders", "Authorization", "Bearer "+adaToken, http.StatusOK)
+	var response struct {
+		Items []struct {
+			UserID int64 `json:"userId"`
+		} `json:"items"`
+	}
+	decodeBody(t, body, &response)
+	if len(response.Items) != 1 || response.Items[0].UserID != adaID {
+		t.Fatalf("orders = %+v, want only Ada's order", response.Items)
+	}
+}
+
+func TestCustomerCannotReadAnotherCustomersProfile(t *testing.T) {
+	server := newTestServer(t)
+	adaToken, _ := registerAccessToken(t, server, "ada@example.com")
+	_, graceID := registerAccessToken(t, server, "grace@example.com")
+
+	body := getWithHeader(t, server, "/api/v1/users/"+strconv.FormatInt(graceID, 10), "Authorization", "Bearer "+adaToken, http.StatusForbidden)
+	assertErrorCode(t, body, "FORBIDDEN")
+}
+
+func TestCustomerCannotListUsers(t *testing.T) {
+	server := newTestServer(t)
+	accessToken, _ := registerAccessToken(t, server, "ada@example.com")
+	body := getWithHeader(t, server, "/api/v1/users", "Authorization", "Bearer "+accessToken, http.StatusForbidden)
+	assertErrorCode(t, body, "FORBIDDEN")
+}
+
+func TestCustomerCannotCreateUser(t *testing.T) {
+	server := newTestServer(t)
+	accessToken, _ := registerAccessToken(t, server, "ada@example.com")
+	body := postJSONWithHeader(t, server, "/api/v1/users", map[string]any{"name": "Grace", "email": "grace@example.com"}, "Authorization", "Bearer "+accessToken, http.StatusForbidden)
+	assertErrorCode(t, body, "FORBIDDEN")
+}
+
+func TestAdminCanListAllOrdersAndCreateForAnotherUser(t *testing.T) {
+	server, adminToken := newTestServerWithBootstrapAdmin(t)
+	userToken, userID := registerAccessToken(t, server, "ada@example.com")
+	postJSONWithHeader(t, server, "/api/v1/orders", map[string]any{"amount": 100}, "Authorization", "Bearer "+userToken, http.StatusCreated)
+	postJSONWithHeader(t, server, "/api/v1/orders", map[string]any{"userId": userID, "amount": 200}, "Authorization", "Bearer "+adminToken, http.StatusCreated)
+
+	body := getWithHeader(t, server, "/api/v1/orders", "Authorization", "Bearer "+adminToken, http.StatusOK)
+	var response struct {
+		Items []struct {
+			UserID int64 `json:"userId"`
+		} `json:"items"`
+	}
+	decodeBody(t, body, &response)
+	if len(response.Items) != 2 || response.Items[0].UserID != userID || response.Items[1].UserID != userID {
+		t.Fatalf("admin orders = %+v", response.Items)
+	}
+}
+
+func TestMySQLAuthenticationAndOrderHTTPFlow(t *testing.T) {
+	dsn := testdb.RequireDSN(t, os.Getenv("MYSQL_TEST_DSN"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	db, err := database.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ApplyMigrations(ctx, db); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	authRepo := auth.NewMySQLRepository(db)
+	authService := auth.NewService(authRepo, authRepo, auth.NewTokenManager([]byte("test-signing-key-that-is-at-least-32-bytes"), "user-order-api", 15*time.Minute, time.Now), time.Hour, time.Now)
+	app := newApplication(slog.New(slog.NewTextHandler(io.Discard, nil)), user.NewMySQLRepository(db), order.NewMySQLRepository(db), authService, false)
+	t.Cleanup(func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+		defer shutdownCancel()
+		_ = app.Close(shutdownCtx)
+	})
+
+	email := "http-flow-" + strconv.FormatInt(time.Now().UnixNano(), 10) + "@example.com"
+	accessToken, userID := registerAccessToken(t, app, email)
+	orderBody := postJSONWithHeader(t, app, "/api/v1/orders", map[string]any{"amount": 2599}, "Authorization", "Bearer "+accessToken, http.StatusCreated)
+	var createdOrder struct {
+		ID int64 `json:"id"`
+	}
+	decodeBody(t, orderBody, &createdOrder)
+
+	login := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"email":"`+email+`","password":"correct-password"}`))
+	login.Header.Set("Content-Type", "application/json")
+	loginRecorder := httptest.NewRecorder()
+	app.ServeHTTP(loginRecorder, login)
+	if loginRecorder.Code != http.StatusOK {
+		t.Fatalf("login = %d %s", loginRecorder.Code, loginRecorder.Body.String())
+	}
+	oldCookie := loginRecorder.Result().Cookies()[0]
+	refresh := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", nil)
+	refresh.AddCookie(oldCookie)
+	refreshRecorder := httptest.NewRecorder()
+	app.ServeHTTP(refreshRecorder, refresh)
+	if refreshRecorder.Code != http.StatusOK {
+		t.Fatalf("refresh = %d %s", refreshRecorder.Code, refreshRecorder.Body.String())
+	}
+	logout := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	logout.AddCookie(refreshRecorder.Result().Cookies()[0])
+	logoutRecorder := httptest.NewRecorder()
+	app.ServeHTTP(logoutRecorder, logout)
+	if logoutRecorder.Code != http.StatusNoContent {
+		t.Fatalf("logout = %d %s", logoutRecorder.Code, logoutRecorder.Body.String())
+	}
+
+	t.Cleanup(func() {
+		_, _ = db.Exec("DELETE FROM sessions WHERE user_id = ?", userID)
+		_, _ = db.Exec("DELETE FROM orders WHERE id = ?", createdOrder.ID)
+		_, _ = db.Exec("DELETE FROM users WHERE id = ?", userID)
+	})
+}
+
 func newTestServer(t *testing.T) *application {
 	t.Helper()
 	server := newServer()
@@ -296,11 +454,68 @@ func newTestServer(t *testing.T) *application {
 	return server
 }
 
+func newTestServerWithBootstrapAdmin(t *testing.T) (*application, string) {
+	t.Helper()
+	userRepo := user.NewMemoryRepository()
+	authService := newMemoryAuthService(userRepo)
+	if _, err := authService.BootstrapAdmin(context.Background(), "admin@example.com", "correct-password"); err != nil {
+		t.Fatal(err)
+	}
+	server := newApplication(slog.New(slog.NewTextHandler(io.Discard, nil)), userRepo, order.NewMemoryRepository(), authService, false)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := server.Close(ctx); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	return server, loginAccessToken(t, server, "admin@example.com", "correct-password")
+}
+
+func registerAccessToken(t *testing.T, handler http.Handler, email string) (string, int64) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(`{"name":"Ada","email":"`+email+`","password":"correct-password"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		AccessToken string `json:"accessToken"`
+		User        struct {
+			ID int64 `json:"id"`
+		} `json:"user"`
+	}
+	decodeBody(t, rec.Body.Bytes(), &response)
+	return response.AccessToken, response.User.ID
+}
+
+func loginAccessToken(t *testing.T, handler http.Handler, email, password string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"email":"`+email+`","password":"`+password+`"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		AccessToken string `json:"accessToken"`
+	}
+	decodeBody(t, rec.Body.Bytes(), &response)
+	return response.AccessToken
+}
+
 func postJSON(t *testing.T, handler http.Handler, path string, payload map[string]any, wantStatus int) []byte {
 	return postJSONWithHeader(t, handler, path, payload, "", "", wantStatus)
 }
 
 func postJSONWithHeader(t *testing.T, handler http.Handler, path string, payload map[string]any, header, value string, wantStatus int) []byte {
+	return postJSONWithHeaders(t, handler, path, payload, map[string]string{header: value}, wantStatus)
+}
+
+func postJSONWithHeaders(t *testing.T, handler http.Handler, path string, payload map[string]any, headers map[string]string, wantStatus int) []byte {
 	t.Helper()
 
 	body, err := json.Marshal(payload)
@@ -310,8 +525,10 @@ func postJSONWithHeader(t *testing.T, handler http.Handler, path string, payload
 
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	if header != "" {
-		req.Header.Set(header, value)
+	for header, value := range headers {
+		if header != "" {
+			req.Header.Set(header, value)
+		}
 	}
 	rec := httptest.NewRecorder()
 
@@ -336,6 +553,18 @@ func get(t *testing.T, handler http.Handler, path string, wantStatus int) []byte
 		t.Fatalf("GET %s status = %d, want %d, body = %s", path, rec.Code, wantStatus, rec.Body.String())
 	}
 
+	return rec.Body.Bytes()
+}
+
+func getWithHeader(t *testing.T, handler http.Handler, path, header, value string, wantStatus int) []byte {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set(header, value)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != wantStatus {
+		t.Fatalf("GET %s status = %d, want %d, body = %s", path, rec.Code, wantStatus, rec.Body.String())
+	}
 	return rec.Body.Bytes()
 }
 

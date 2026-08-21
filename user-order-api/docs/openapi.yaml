@@ -2,13 +2,16 @@ openapi: 3.0.3
 info:
   title: User Order API
   version: 1.0.0
-  description: 用户与订单的 MySQL 持久化 API。
+  description: 使用 MySQL 持久化、短期 JWT 与可撤销刷新会话的用户订单 API。
 servers:
   - url: http://localhost:8888/api/v1
     description: 本地开发环境
+security:
+  - BearerAuth: []
 paths:
   /health:
     get:
+      security: []
       summary: 健康检查
       responses:
         '200':
@@ -24,9 +27,71 @@ paths:
                     example: ok
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /auth/register:
+    post:
+      security: []
+      summary: 注册普通用户
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/AuthResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/EmailAlreadyExists'
+  /auth/login:
+    post:
+      security: []
+      summary: 邮箱密码登录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AuthResult'
+        '401':
+          $ref: '#/components/responses/InvalidCredentials'
+  /auth/refresh:
+    post:
+      security: []
+      summary: 使用 HttpOnly Refresh Cookie 轮换会话
+      responses:
+        '200':
+          $ref: '#/components/responses/AuthResult'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+  /auth/logout:
+    post:
+      security: []
+      summary: 撤销当前刷新会话并清除 Cookie
+      responses:
+        '204':
+          description: 已退出登录
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+  /auth/me:
+    get:
+      summary: 当前登录用户
+      responses:
+        '200':
+          description: 当前用户公开资料
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthUser'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
   /users:
     get:
-      summary: 查询用户列表
+      summary: 查询用户列表（仅 admin）
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/AfterID'
@@ -35,10 +100,14 @@ paths:
           $ref: '#/components/responses/UserList'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
     post:
-      summary: 创建用户
+      summary: 创建无登录凭据的用户（仅 admin；普通注册使用 /auth/register）
       requestBody:
         required: true
         content:
@@ -54,13 +123,17 @@ paths:
                 $ref: '#/components/schemas/User'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /users/{id}:
     get:
-      summary: 按 ID 查询用户
+      summary: 按 ID 查询用户（本人或 admin）
       parameters:
         - $ref: '#/components/parameters/ID'
       responses:
@@ -72,13 +145,17 @@ paths:
                 $ref: '#/components/schemas/User'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/UserNotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /orders:
     get:
-      summary: 查询订单列表
+      summary: 查询订单列表（普通用户仅看到自己的订单）
       parameters:
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/AfterID'
@@ -87,10 +164,12 @@ paths:
           $ref: '#/components/responses/OrderList'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
         '500':
           $ref: '#/components/responses/InternalServerError'
     post:
-      summary: 创建订单
+      summary: 创建订单（普通用户自动绑定当前用户）
       parameters:
         - name: Idempotency-Key
           in: header
@@ -121,6 +200,10 @@ paths:
                 $ref: '#/components/schemas/Order'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType'
         '409':
@@ -141,6 +224,10 @@ paths:
                 $ref: '#/components/schemas/Order'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/OrderNotFound'
         '500':
@@ -159,6 +246,10 @@ paths:
                 $ref: '#/components/schemas/Order'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/OrderNotFound'
         '409':
@@ -179,6 +270,10 @@ paths:
                 $ref: '#/components/schemas/Order'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/OrderNotFound'
         '409':
@@ -186,6 +281,11 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   parameters:
     ID:
       name: id
@@ -211,6 +311,55 @@ components:
         format: int64
         minimum: 1
   schemas:
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name:
+          type: string
+          example: Ada
+        email:
+          type: string
+          format: email
+          example: ada@example.com
+        password:
+          type: string
+          format: password
+          minLength: 12
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+    AuthUser:
+      type: object
+      required: [id, name, email, role]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [user, admin]
+    AuthResult:
+      type: object
+      required: [accessToken, user]
+      properties:
+        accessToken:
+          type: string
+          description: 仅保存在前端内存，并通过 Authorization Bearer 发送；不要写入 localStorage。
+        user:
+          $ref: '#/components/schemas/AuthUser'
     CreateUserRequest:
       type: object
       required: [name, email]
@@ -242,12 +391,13 @@ components:
           format: date-time
     CreateOrderRequest:
       type: object
-      required: [userId, amount]
+      required: [amount]
       properties:
         userId:
           type: integer
           format: int64
           minimum: 1
+          description: admin 可为其他用户指定；普通用户可省略，服务端自动使用当前用户。
           example: 1
         amount:
           type: integer
@@ -289,6 +439,41 @@ components:
         error:
           type: string
   responses:
+    AuthResult:
+      description: 返回短期 Access Token，并设置 HttpOnly、SameSite=Strict 的 refresh_token Cookie。
+      headers:
+        Set-Cookie:
+          schema:
+            type: string
+          description: Refresh Cookie；浏览器自动保存，前端 JavaScript 不可读取。
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthResult'
+    Unauthenticated:
+      description: 未带、无效、过期或已撤销的认证凭据，错误码为 UNAUTHENTICATED
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InvalidCredentials:
+      description: 登录凭据无效，错误码为 INVALID_CREDENTIALS
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    EmailAlreadyExists:
+      description: 邮箱已注册，错误码为 EMAIL_ALREADY_EXISTS
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: 已登录但无资源权限，错误码为 FORBIDDEN
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     UserList:
       description: 用户游标分页结果
       content:

@@ -1,70 +1,40 @@
 {
   "info": {
     "name": "user-order-api",
-    "description": "用户与订单 API。先执行“创建用户”，其测试脚本会保存 userId，随后可直接创建订单。",
+    "description": "先运行 Auth / Register。响应中的 Access Token 自动保存为 Collection 变量；Refresh Cookie 由 Postman Cookie Jar 自动保存。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    {
-      "key": "baseUrl",
-      "value": "http://localhost:8888/api/v1"
-    },
-    {
-      "key": "userId",
-      "value": "1"
-    },
-    {
-      "key": "orderId",
-      "value": "1"
-    },
-    {
-      "key": "idempotencyKey",
-      "value": ""
-    }
+    { "key": "baseUrl", "value": "http://localhost:8888/api/v1" },
+    { "key": "email", "value": "postman-{{$guid}}@example.com" },
+    { "key": "password", "value": "correct-password" },
+    { "key": "accessToken", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "orderId", "value": "" },
+    { "key": "idempotencyKey", "value": "" }
   ],
   "item": [
+    { "name": "Health", "request": { "method": "GET", "url": "{{baseUrl}}/health" } },
     {
-      "name": "Health",
-      "request": {
-        "method": "GET",
-        "url": "{{baseUrl}}/health"
-      }
-    },
-    {
-      "name": "Users",
+      "name": "Auth",
       "item": [
         {
-          "name": "Create User",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('status is 201', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('userId', pm.response.json().id);"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Postman User\",\n  \"email\": \"postman-{{$guid}}@example.com\"\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": "{{baseUrl}}/users"
-          }
+          "name": "Register",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 201', () => pm.response.to.have.status(201));", "const body = pm.response.json();", "pm.collectionVariables.set('accessToken', body.accessToken);", "pm.collectionVariables.set('userId', body.user.id);"] }}],
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Postman User\",\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/auth/register" }
         },
         {
-          "name": "List Users",
-          "request": { "method": "GET", "url": "{{baseUrl}}/users?limit=20" }
+          "name": "Login",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 200', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('accessToken', pm.response.json().accessToken);"] }}],
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/auth/login" }
         },
+        { "name": "Me", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/auth/me" } },
         {
-          "name": "Get User by ID",
-          "request": { "method": "GET", "url": "{{baseUrl}}/users/{{userId}}" }
-        }
+          "name": "Refresh",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 200', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('accessToken', pm.response.json().accessToken);"] }}],
+          "request": { "method": "POST", "url": "{{baseUrl}}/auth/refresh" }
+        },
+        { "name": "Logout", "request": { "method": "POST", "url": "{{baseUrl}}/auth/logout" } }
       ]
     },
     {
@@ -73,81 +43,20 @@
         {
           "name": "Create Order",
           "event": [
-            {
-              "listen": "prerequest",
-              "script": {
-                "exec": [
-                  "pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('order-{{$guid}}'));"
-                ]
-              }
-            },
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('status is 201', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('orderId', pm.response.json().id);"
-                ]
-              }
-            }
+            { "listen": "prerequest", "script": { "exec": ["pm.collectionVariables.set('idempotencyKey', pm.variables.replaceIn('order-{{$guid}}'));" ] }},
+            { "listen": "test", "script": { "exec": ["pm.test('status is 201', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('orderId', pm.response.json().id);"] }}
           ],
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"userId\": {{userId}},\n  \"amount\": 2599\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": "{{baseUrl}}/orders"
-          }
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }, { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }], "body": { "mode": "raw", "raw": "{\n  \"amount\": 2599\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/orders" }
         },
         {
           "name": "Replay Create Order",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
-                  "pm.test('returns the same order', () => pm.expect(pm.response.json().id).to.eql(Number(pm.collectionVariables.get('orderId')));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"userId\": {{userId}},\n  \"amount\": 2599\n}",
-              "options": { "raw": { "language": "json" } }
-            },
-            "url": "{{baseUrl}}/orders"
-          }
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 200', () => pm.response.to.have.status(200));", "pm.test('same order', () => pm.expect(pm.response.json().id).to.eql(Number(pm.collectionVariables.get('orderId')));"] }}],
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }, { "key": "Content-Type", "value": "application/json" }, { "key": "Idempotency-Key", "value": "{{idempotencyKey}}" }], "body": { "mode": "raw", "raw": "{\n  \"amount\": 2599\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/orders" }
         },
-        {
-          "name": "List Orders",
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders?limit=20" }
-        },
-        {
-          "name": "Get Order by ID",
-          "request": { "method": "GET", "url": "{{baseUrl}}/orders/{{orderId}}" }
-        },
-        {
-          "name": "Pay Order",
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{orderId}}/pay" }
-        },
-        {
-          "name": "Cancel Order",
-          "request": { "method": "POST", "url": "{{baseUrl}}/orders/{{orderId}}/cancel" }
-        }
+        { "name": "List My Orders", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/orders?limit=20" } },
+        { "name": "Get Order", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/orders/{{orderId}}" } },
+        { "name": "Pay Order", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/orders/{{orderId}}/pay" } },
+        { "name": "Cancel Order", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/orders/{{orderId}}/cancel" } }
       ]
     }
   ]

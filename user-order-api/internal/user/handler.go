@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"bridge-go/user-order-api/internal/platform/httpx"
+	"bridge-go/user-order-api/internal/platform/principal"
 )
 
 type Handler struct {
@@ -24,9 +25,18 @@ func (h *Handler) Register(mux *http.ServeMux) {
 func (h *Handler) users(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := requestContext(r)
 	defer cancel()
+	currentPrincipal, ok := principal.FromContext(ctx)
+	if !ok {
+		httpx.WriteError(w, httpx.UnauthorizedCode("UNAUTHENTICATED", "unauthenticated"))
+		return
+	}
 
 	switch r.Method {
 	case http.MethodGet:
+		if !principal.IsAdmin(currentPrincipal) {
+			httpx.WriteError(w, httpx.ForbiddenCode("FORBIDDEN", "insufficient permissions"))
+			return
+		}
 		request, err := httpx.ParsePageRequest(r)
 		if err != nil {
 			httpx.WriteError(w, err)
@@ -39,6 +49,10 @@ func (h *Handler) users(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteJSON(w, http.StatusOK, users)
 	case http.MethodPost:
+		if !principal.IsAdmin(currentPrincipal) {
+			httpx.WriteError(w, httpx.ForbiddenCode("FORBIDDEN", "insufficient permissions"))
+			return
+		}
 		var input CreateUserRequest
 		if err := httpx.DecodeJSON(w, r, &input); err != nil {
 			httpx.WriteError(w, err)
@@ -59,6 +73,11 @@ func (h *Handler) users(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) userByID(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := requestContext(r)
 	defer cancel()
+	currentPrincipal, ok := principal.FromContext(ctx)
+	if !ok {
+		httpx.WriteError(w, httpx.UnauthorizedCode("UNAUTHENTICATED", "unauthenticated"))
+		return
+	}
 
 	if r.Method != http.MethodGet {
 		httpx.WriteMethodNotAllowed(w, "GET")
@@ -70,7 +89,10 @@ func (h *Handler) userByID(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, err)
 		return
 	}
-
+	if !principal.IsAdmin(currentPrincipal) && currentPrincipal.UserID != id {
+		httpx.WriteError(w, httpx.ForbiddenCode("FORBIDDEN", "insufficient permissions"))
+		return
+	}
 	user, err := h.service.FindByID(ctx, id)
 	if err != nil {
 		httpx.WriteError(w, err)

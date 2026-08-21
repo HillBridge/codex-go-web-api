@@ -19,6 +19,7 @@
 ```bash
 docker compose up -d
 export MYSQL_DSN='app:app_password@tcp(127.0.0.1:3307)/user_order_api?parseTime=true&charset=utf8mb4&loc=UTC'
+export JWT_SIGNING_KEY='replace-with-at-least-32-random-bytes'
 go run ./cmd/api
 ```
 
@@ -33,6 +34,17 @@ http://localhost:8888
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `MYSQL_DSN` | 无，必填 | MySQL 连接串；应用启动时会执行尚未应用的迁移。 |
+| `JWT_SIGNING_KEY` | 无，必填 | 至少 32 字节的随机签名密钥。可用 `openssl rand -hex 32` 生成。 |
+| `JWT_ISSUER` | `user-order-api` | Access JWT 的签发者。 |
+| `ACCESS_TOKEN_TTL` | `15m` | Access JWT 有效期。 |
+| `REFRESH_TOKEN_TTL` | `168h` | 服务端可撤销 Refresh 会话有效期。 |
+| `AUTH_COOKIE_SECURE` | `true` | 生产必须为 `true`；本地 HTTP 开发才显式设为 `false`。 |
+| `CORS_ALLOWED_ORIGINS` | 空 | 逗号分隔的精确前端 Origin 白名单；默认拒绝跨域。 |
+| `TRUSTED_PROXY_CIDRS` | 空 | 逗号分隔的反向代理 CIDR；仅这些代理转发的 `X-Forwarded-For` 会用于限流来源 IP。 |
+| `RATE_LIMIT_LOGIN_PER_MINUTE` | `5` | 单 IP 登录/注册每分钟上限。 |
+| `RATE_LIMIT_REFRESH_PER_MINUTE` | `20` | 单 IP 刷新会话每分钟上限。 |
+| `RATE_LIMIT_API_PER_MINUTE` | `120` | 单 IP 普通 API 每分钟上限。 |
+| `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | 均为空 | 两者同时设置时，仅在该邮箱不存在时创建首个管理员。 |
 | `PORT` | `8888` | HTTP 监听端口，范围为 1–65535。 |
 | `READ_HEADER_TIMEOUT` | `5s` | 读取请求头超时。 |
 | `READ_TIMEOUT` | `15s` | 读取整个请求超时。 |
@@ -67,22 +79,43 @@ go test ./...
 - OpenAPI 3.0 接口契约：[docs/openapi.yaml](docs/openapi.yaml)
 - Postman Collection：[docs/postman/user-order-api.postman_collection.json](docs/postman/user-order-api.postman_collection.json)
 
-在 Postman 点击 **Import**，选择该 Collection 文件即可。Collection 已内置 `baseUrl=http://localhost:8888/api/v1`；先调用 **Users / Create User**，它会自动保存返回的 `userId`，随后 **Orders / Create Order** 会生成并保存幂等键和 `orderId`。紧接着调用 **Replay Create Order** 可以验证网络重试不会重复创建订单；再调用 **Pay Order** 或 **Cancel Order**。
+在 Postman 点击 **Import**，选择该 Collection 文件即可。先调用 **Auth / Register**：它会自动保存 `accessToken`、`userId`，Postman 也会保存服务设置的 Refresh Cookie。随后可调用 **Orders / Create Order**；它会生成幂等键和 `orderId`。**Refresh** 会轮换 Access Token，**Replay Create Order** 可验证网络重试不会重复创建订单。
 
 ## API
 
-### 创建用户
+### 注册、登录与 Token 使用
+
+先注册并把响应中的 `accessToken` 暂时放进终端变量。浏览器前端应仅把 Access Token 放在内存中，不能写入 `localStorage`；Refresh Token 是 HttpOnly Cookie，JavaScript 不可读取。
+
+```bash
+curl -c cookies.txt -X POST http://localhost:8888/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Ada","email":"ada@example.com","password":"correct-password"}'
+```
+
+登录、刷新和退出：
+
+```bash
+curl -c cookies.txt -X POST http://localhost:8888/api/v1/auth/login -H 'Content-Type: application/json' -d '{"email":"ada@example.com","password":"correct-password"}'
+curl -b cookies.txt -c cookies.txt -X POST http://localhost:8888/api/v1/auth/refresh
+curl -b cookies.txt -X POST http://localhost:8888/api/v1/auth/logout
+```
+
+之后每个受保护请求携带：`-H "Authorization: Bearer $ACCESS_TOKEN"`。缺失或无效令牌返回 `401 UNAUTHENTICATED`；越权返回 `403 FORBIDDEN`。
+
+### 创建用户（仅管理员）
 
 ```bash
 curl -X POST http://localhost:8888/api/v1/users \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -d '{"name":"Ada","email":"ada@example.com"}'
 ```
 
 ### 查询用户列表
 
 ```bash
-curl 'http://localhost:8888/api/v1/users?limit=20'
+curl -H "Authorization: Bearer $ACCESS_TOKEN" 'http://localhost:8888/api/v1/users?limit=20'
 ```
 
 列表响应使用游标分页：`limit` 默认为 20，范围 1–100；首个请求可省略 `afterId`，后续请求将返回的 `nextCursor` 作为 `afterId` 传回。没有下一页时不会出现 `nextCursor`。
@@ -94,7 +127,7 @@ curl 'http://localhost:8888/api/v1/users?limit=20'
 ### 查询用户详情
 
 ```bash
-curl http://localhost:8888/api/v1/users/1
+curl -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:8888/api/v1/users/1
 ```
 
 ### 创建订单
@@ -102,6 +135,7 @@ curl http://localhost:8888/api/v1/users/1
 ```bash
 curl -X POST http://localhost:8888/api/v1/orders \
   -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Idempotency-Key: create-order-20260820-001' \
   -d '{"userId":1,"amount":2599}'
 ```
@@ -122,20 +156,20 @@ pending --取消--> cancelled
 `paid` 与 `cancelled` 均为终态。重复执行同一个动作会返回当前订单和 `200`；对已支付订单取消、或对已取消订单支付，会返回 `409 INVALID_ORDER_STATE`。
 
 ```bash
-curl -X POST http://localhost:8888/api/v1/orders/1/pay
-curl -X POST http://localhost:8888/api/v1/orders/1/cancel
+curl -X POST -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:8888/api/v1/orders/1/pay
+curl -X POST -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:8888/api/v1/orders/1/cancel
 ```
 
 ### 查询订单列表
 
 ```bash
-curl 'http://localhost:8888/api/v1/orders?limit=20'
+curl -H "Authorization: Bearer $ACCESS_TOKEN" 'http://localhost:8888/api/v1/orders?limit=20'
 ```
 
 ### 查询订单详情
 
 ```bash
-curl http://localhost:8888/api/v1/orders/1
+curl -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:8888/api/v1/orders/1
 ```
 
 ## 项目结构
@@ -162,11 +196,19 @@ internal/order
   service.go       订单业务逻辑，依赖 UserFinder interface
   handler.go       HTTP handler
 
+internal/auth
+  service.go       bcrypt 注册/登录、JWT 签发、Refresh 轮换与退出
+  repository.go    会话与身份仓储接口；Refresh Token 仅保存哈希
+  handler.go       注册、登录、刷新、退出和当前用户接口
+  middleware.go    Bearer JWT 校验并注入请求身份
+
 internal/platform
   audit            有界队列与固定 worker 的异步审计日志；队列满时最佳努力丢弃并记录告警
   database         连接池、嵌入式向前迁移及 SQL 文件
   httpx            JSON、错误响应、路径参数工具
   page             游标分页请求与响应契约
+  principal        与业务解耦的请求身份上下文
+  security         精确 Origin CORS 与按 IP 的内存限流
 ```
 
 ## 这版练到哪些 Go 基础

@@ -61,6 +61,18 @@ func ConflictCode(code, message string) *AppError {
 	return &AppError{Status: http.StatusConflict, Code: code, Message: message}
 }
 
+func UnauthorizedCode(code, message string) *AppError {
+	return &AppError{Status: http.StatusUnauthorized, Code: code, Message: message}
+}
+
+func ForbiddenCode(code, message string) *AppError {
+	return &AppError{Status: http.StatusForbidden, Code: code, Message: message}
+}
+
+func TooManyRequestsCode(code, message string) *AppError {
+	return &AppError{Status: http.StatusTooManyRequests, Code: code, Message: message}
+}
+
 func Internal(message string, err error) *AppError {
 	return &AppError{Status: http.StatusInternalServerError, Code: CodeInternalError, Message: message, Err: err}
 }

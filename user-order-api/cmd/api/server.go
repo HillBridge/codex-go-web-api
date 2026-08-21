@@ -4,15 +4,21 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"os"
+	"strings"
+	"sync"
 	"time"
 
+	"bridge-go/user-order-api/internal/auth"
 	"bridge-go/user-order-api/internal/order"
 	"bridge-go/user-order-api/internal/platform/audit"
 	"bridge-go/user-order-api/internal/platform/httpx"
+	"bridge-go/user-order-api/internal/platform/security"
 	"bridge-go/user-order-api/internal/user"
 )
 
@@ -25,17 +31,24 @@ const apiV1Prefix = "/api/v1"
 
 func newServer() *application {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	return newApplication(logger, user.NewMemoryRepository(), order.NewMemoryRepository())
+	userRepo := user.NewMemoryRepository()
+	return newApplication(logger, userRepo, order.NewMemoryRepository(), newMemoryAuthService(userRepo), false)
 }
 
-func newApplication(logger *slog.Logger, userRepo user.Repository, orderRepo order.Repository) *application {
+func newApplication(logger *slog.Logger, userRepo user.Repository, orderRepo order.Repository, authService *auth.Service, cookieSecure bool) *application {
+	return newApplicationWithSecurity(logger, userRepo, orderRepo, authService, cookieSecure, nil, nil, security.Limits{LoginPerMinute: 5, RefreshPerMinute: 20, APIPerMinute: 120})
+}
+
+func newApplicationWithSecurity(logger *slog.Logger, userRepo user.Repository, orderRepo order.Repository, authService *auth.Service, cookieSecure bool, corsAllowedOrigins []string, trustedProxyCIDRs []netip.Prefix, rateLimits security.Limits) *application {
 	auditLogger := audit.NewAsyncLogger(logger)
+	authService.SetAuditLogger(auditLogger)
 
 	userService := user.NewService(userRepo, auditLogger)
 	userHandler := user.NewHandler(userService)
 
 	orderService := order.NewService(orderRepo, userRepo, auditLogger)
 	orderHandler := order.NewHandler(orderService)
+	authHandler := auth.NewHandler(authService, cookieSecure)
 
 	apiMux := http.NewServeMux()
 	apiMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -46,18 +59,89 @@ func newApplication(logger *slog.Logger, userRepo user.Repository, orderRepo ord
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	userHandler.Register(apiMux)
-	orderHandler.Register(apiMux)
+	authHandler.Register(apiMux)
+	protectedMux := http.NewServeMux()
+	userHandler.Register(protectedMux)
+	orderHandler.Register(protectedMux)
+	protected := authService.RequireBearer(protectedMux)
+	apiMux.Handle("/users", protected)
+	apiMux.Handle("/users/", protected)
+	apiMux.Handle("/orders", protected)
+	apiMux.Handle("/orders/", protected)
 	apiMux.HandleFunc("/", routeNotFound)
 
 	mux := http.NewServeMux()
 	mux.Handle(apiV1Prefix+"/", http.StripPrefix(apiV1Prefix, apiMux))
 	mux.HandleFunc("/", routeNotFound)
+	secured := security.CORSMiddleware(corsAllowedOrigins, security.NewRateLimiterWithTrustedProxies(rateLimits, time.Now, trustedProxyCIDRs).Middleware(mux))
 
 	return &application{
-		handler:     requestIDMiddleware(requestLogMiddleware(logger, recoveryMiddleware(logger, mux))),
+		handler:     requestIDMiddleware(requestLogMiddleware(logger, recoveryMiddleware(logger, secured))),
 		auditLogger: auditLogger,
 	}
+}
+
+func newMemoryAuthService(userRepo user.Repository) *auth.Service {
+	now := time.Now
+	return auth.NewService(
+		newMemoryIdentityRepository(userRepo),
+		auth.NewMemoryRepository(),
+		auth.NewTokenManager([]byte("test-signing-key-that-is-at-least-32-bytes"), "user-order-api", 15*time.Minute, now),
+		7*24*time.Hour,
+		now,
+	)
+}
+
+type memoryIdentityRepository struct {
+	users   user.Repository
+	mu      sync.RWMutex
+	items   map[int64]auth.Identity
+	byEmail map[string]int64
+}
+
+func newMemoryIdentityRepository(users user.Repository) *memoryIdentityRepository {
+	return &memoryIdentityRepository{users: users, items: make(map[int64]auth.Identity), byEmail: make(map[string]int64)}
+}
+
+func (r *memoryIdentityRepository) CreateIdentity(ctx context.Context, input auth.NewIdentity) (auth.Identity, error) {
+	created, err := r.users.Create(ctx, user.CreateUserRequest{Name: input.Name, Email: input.Email})
+	if err != nil {
+		if errors.Is(err, user.ErrEmailTaken) {
+			return auth.Identity{}, auth.ErrEmailTaken
+		}
+		return auth.Identity{}, err
+	}
+	role := input.Role
+	if role == "" {
+		role = auth.RoleUser
+	}
+	identity := auth.Identity{ID: created.ID, Name: created.Name, Email: created.Email, PasswordHash: input.PasswordHash, Role: role, AuthVersion: 1, CreatedAt: created.CreatedAt}
+	r.mu.Lock()
+	r.items[identity.ID] = identity
+	r.byEmail[strings.ToLower(identity.Email)] = identity.ID
+	r.mu.Unlock()
+	return identity, nil
+}
+
+func (r *memoryIdentityRepository) FindIdentityByEmail(_ context.Context, email string) (auth.Identity, error) {
+	r.mu.RLock()
+	id, ok := r.byEmail[strings.ToLower(strings.TrimSpace(email))]
+	item := r.items[id]
+	r.mu.RUnlock()
+	if !ok {
+		return auth.Identity{}, auth.ErrIdentityNotFound
+	}
+	return item, nil
+}
+
+func (r *memoryIdentityRepository) FindIdentityByID(_ context.Context, id int64) (auth.Identity, error) {
+	r.mu.RLock()
+	item, ok := r.items[id]
+	r.mu.RUnlock()
+	if !ok {
+		return auth.Identity{}, auth.ErrIdentityNotFound
+	}
+	return item, nil
 }
 
 func routeNotFound(w http.ResponseWriter, r *http.Request) {

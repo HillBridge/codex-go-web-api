@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -37,6 +38,9 @@ func TestLoadConfigUsesMySQLDSN(t *testing.T) {
 		if key == "MYSQL_DSN" {
 			return wantDSN
 		}
+		if key == "JWT_SIGNING_KEY" {
+			return "test-signing-key-with-at-least-32-bytes"
+		}
 		return ""
 	})
 	if err != nil {
@@ -51,6 +55,92 @@ func TestLoadConfigRejectsMissingMySQLDSN(t *testing.T) {
 	_, err := loadConfig(func(string) string { return "" })
 	if err == nil || err.Error() != "MYSQL_DSN is required" {
 		t.Fatalf("loadConfig() error = %v, want %q", err, "MYSQL_DSN is required")
+	}
+}
+
+func TestLoadConfigRejectsMissingJWTSigningKey(t *testing.T) {
+	_, err := loadConfig(func(key string) string {
+		if key == "MYSQL_DSN" {
+			return "app:test@tcp(localhost:3307)/user_order_api?parseTime=true&loc=UTC"
+		}
+		return ""
+	})
+	if err == nil || err.Error() != "JWT_SIGNING_KEY is required" {
+		t.Fatalf("loadConfig() error = %v, want missing JWT signing key error", err)
+	}
+}
+
+func TestLoadConfigRejectsShortJWTSigningKey(t *testing.T) {
+	_, err := loadConfig(testEnvironment(map[string]string{"JWT_SIGNING_KEY": "too-short"}))
+	if err == nil || err.Error() != "JWT_SIGNING_KEY must be at least 32 bytes" {
+		t.Fatalf("loadConfig() error = %v, want short JWT signing key error", err)
+	}
+}
+
+func TestLoadConfigUsesAuthSecurityDefaults(t *testing.T) {
+	config, err := loadConfig(testEnvironment(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.JWTIssuer != "user-order-api" || config.AccessTokenTTL != 15*time.Minute || config.RefreshTokenTTL != 7*24*time.Hour || !config.AuthCookieSecure {
+		t.Fatalf("auth defaults = %+v", config)
+	}
+	if config.LoginRateLimitPerMinute != 5 || config.RefreshRateLimitPerMinute != 20 || config.APIRateLimitPerMinute != 120 {
+		t.Fatalf("rate limit defaults = %+v", config)
+	}
+}
+
+func TestLoadConfigParsesAuthSecuritySettings(t *testing.T) {
+	config, err := loadConfig(testEnvironment(map[string]string{
+		"JWT_ISSUER":                    "orders.example.com",
+		"ACCESS_TOKEN_TTL":              "10m",
+		"REFRESH_TOKEN_TTL":             "48h",
+		"AUTH_COOKIE_SECURE":            "false",
+		"CORS_ALLOWED_ORIGINS":          "https://app.example.com, https://admin.example.com ",
+		"RATE_LIMIT_LOGIN_PER_MINUTE":   "7",
+		"RATE_LIMIT_REFRESH_PER_MINUTE": "21",
+		"RATE_LIMIT_API_PER_MINUTE":     "121",
+		"BOOTSTRAP_ADMIN_EMAIL":         "admin@example.com",
+		"BOOTSTRAP_ADMIN_PASSWORD":      "correct-password",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.JWTIssuer != "orders.example.com" || config.AccessTokenTTL != 10*time.Minute || config.RefreshTokenTTL != 48*time.Hour || config.AuthCookieSecure {
+		t.Fatalf("auth config = %+v", config)
+	}
+	if len(config.CORSAllowedOrigins) != 2 || config.CORSAllowedOrigins[1] != "https://admin.example.com" {
+		t.Fatalf("CORSAllowedOrigins = %#v", config.CORSAllowedOrigins)
+	}
+	if config.LoginRateLimitPerMinute != 7 || config.RefreshRateLimitPerMinute != 21 || config.APIRateLimitPerMinute != 121 {
+		t.Fatalf("rate limits = %+v", config)
+	}
+	if config.BootstrapAdminEmail != "admin@example.com" || config.BootstrapAdminPassword != "correct-password" {
+		t.Fatalf("bootstrap config = %+v", config)
+	}
+}
+
+func TestLoadConfigRejectsIncompleteBootstrapAdmin(t *testing.T) {
+	_, err := loadConfig(testEnvironment(map[string]string{"BOOTSTRAP_ADMIN_EMAIL": "admin@example.com"}))
+	if err == nil || err.Error() != "BOOTSTRAP_ADMIN_EMAIL and BOOTSTRAP_ADMIN_PASSWORD must be set together" {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+}
+
+func TestLoadConfigRejectsInvalidAllowedOrigin(t *testing.T) {
+	_, err := loadConfig(testEnvironment(map[string]string{"CORS_ALLOWED_ORIGINS": "not an origin"}))
+	if err == nil || err.Error() != "CORS_ALLOWED_ORIGINS contains an invalid origin" {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+}
+
+func TestLoadConfigParsesTrustedProxyCIDRs(t *testing.T) {
+	config, err := loadConfig(testEnvironment(map[string]string{"TRUSTED_PROXY_CIDRS": "127.0.0.0/8, 10.0.0.0/8"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(config.TrustedProxyCIDRs) != 2 || config.TrustedProxyCIDRs[0] != netip.MustParsePrefix("127.0.0.0/8") {
+		t.Fatalf("TrustedProxyCIDRs = %#v", config.TrustedProxyCIDRs)
 	}
 }
 
@@ -210,6 +300,9 @@ func testEnvironment(values map[string]string) func(string) string {
 	return func(key string) string {
 		if key == "MYSQL_DSN" {
 			return "app:test@tcp(localhost:3307)/user_order_api?parseTime=true&loc=UTC"
+		}
+		if key == "JWT_SIGNING_KEY" && values[key] == "" {
+			return "test-signing-key-with-at-least-32-bytes"
 		}
 		return values[key]
 	}

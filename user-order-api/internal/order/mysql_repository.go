@@ -77,10 +77,23 @@ func (r *MySQLRepository) insert(ctx context.Context, input CreateOrderRequest) 
 }
 
 func (r *MySQLRepository) List(ctx context.Context, request page.Request) (page.Result[Order], error) {
-	rows, err := r.db.QueryContext(ctx,
-		"SELECT id, user_id, amount, status, created_at FROM orders WHERE id > ? ORDER BY id ASC LIMIT ?",
-		request.AfterID, request.Limit+1,
-	)
+	return r.list(ctx, request, 0)
+}
+
+func (r *MySQLRepository) ListByUserID(ctx context.Context, userID int64, request page.Request) (page.Result[Order], error) {
+	return r.list(ctx, request, userID)
+}
+
+func (r *MySQLRepository) list(ctx context.Context, request page.Request, userID int64) (page.Result[Order], error) {
+	query := "SELECT id, user_id, amount, status, created_at FROM orders WHERE id > ?"
+	args := []any{request.AfterID}
+	if userID > 0 {
+		query += " AND user_id = ?"
+		args = append(args, userID)
+	}
+	query += " ORDER BY id ASC LIMIT ?"
+	args = append(args, request.Limit+1)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return page.Result[Order]{}, fmt.Errorf("list orders: %w", err)
 	}

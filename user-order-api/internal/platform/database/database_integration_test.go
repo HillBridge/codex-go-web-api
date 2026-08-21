@@ -39,8 +39,8 @@ func TestApplyMigrationsIsIdempotentAndCreatesForeignKey(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 3 {
-		t.Fatalf("migration count = %d, want 3", migrations)
+	if migrations != 5 {
+		t.Fatalf("migration count = %d, want 5", migrations)
 	}
 	var idempotencyKeyColumns int
 	if err := db.QueryRowContext(ctx, `
@@ -52,7 +52,19 @@ func TestApplyMigrationsIsIdempotentAndCreatesForeignKey(t *testing.T) {
 	if idempotencyKeyColumns != 1 {
 		t.Fatalf("idempotency_key columns = %d, want 1", idempotencyKeyColumns)
 	}
-	for _, table := range []string{"users", "orders"} {
+	for _, column := range []string{"password_hash", "role", "auth_version"} {
+		var count int
+		if err := db.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM information_schema.columns
+			WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = ?`, column).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("users.%s count = %d, want 1", column, count)
+		}
+	}
+	for _, table := range []string{"users", "orders", "sessions"} {
 		var count int
 		if err := db.QueryRowContext(ctx, `
 			SELECT COUNT(*)
@@ -75,6 +87,7 @@ func TestApplyMigrationsIsIdempotentAndCreatesForeignKey(t *testing.T) {
 func resetSchema(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	for _, statement := range []string{
+		"DROP TABLE IF EXISTS sessions",
 		"DROP TABLE IF EXISTS orders",
 		"DROP TABLE IF EXISTS users",
 		"DROP TABLE IF EXISTS schema_migrations",

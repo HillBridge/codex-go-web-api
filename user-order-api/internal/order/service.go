@@ -98,6 +98,14 @@ func (s *Service) List(ctx context.Context, request page.Request) (page.Result[O
 	return orders, nil
 }
 
+func (s *Service) ListByUserID(ctx context.Context, userID int64, request page.Request) (page.Result[Order], error) {
+	orders, err := s.repo.ListByUserID(ctx, userID, request)
+	if err != nil {
+		return page.Result[Order]{}, httpx.Internal("failed to list orders", fmt.Errorf("list orders by user: %w", err))
+	}
+	return orders, nil
+}
+
 func (s *Service) FindByID(ctx context.Context, id int64) (Order, error) {
 	order, err := s.repo.FindByID(ctx, id)
 	if err != nil {

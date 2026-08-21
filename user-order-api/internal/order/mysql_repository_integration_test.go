@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"bridge-go/user-order-api/internal/platform/database"
+	"bridge-go/user-order-api/internal/platform/page"
 	"bridge-go/user-order-api/internal/platform/testdb"
 	"bridge-go/user-order-api/internal/user"
 )
@@ -138,6 +139,30 @@ func TestMySQLRepositoryPersistsAllowedStateTransitions(t *testing.T) {
 	_, _, err = orderRepo.Transition(context.Background(), createdOrder.ID, StatusCancelled)
 	if !errors.Is(err, ErrInvalidState) {
 		t.Fatalf("cancel paid order error = %v, want ErrInvalidState", err)
+	}
+}
+
+func TestMySQLRepositoryListsOnlyRequestedUsersOrders(t *testing.T) {
+	db := openMySQLTestDatabase(t)
+	userRepo := user.NewMySQLRepository(db)
+	orderRepo := NewMySQLRepository(db)
+	firstUser := createMySQLOrderUser(t, userRepo)
+	secondUser := createMySQLOrderUser(t, userRepo)
+	cleanupMySQLOrderUser(t, db, firstUser.ID)
+	cleanupMySQLOrderUser(t, db, secondUser.ID)
+	if _, _, err := orderRepo.Create(context.Background(), CreateOrderRequest{UserID: firstUser.ID, Amount: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := orderRepo.Create(context.Background(), CreateOrderRequest{UserID: secondUser.ID, Amount: 200}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := orderRepo.ListByUserID(context.Background(), firstUser.ID, page.Request{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].UserID != firstUser.ID {
+		t.Fatalf("scoped orders = %+v", result.Items)
 	}
 }
 
