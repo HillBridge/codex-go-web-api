@@ -1,17 +1,30 @@
 {
   "info": {
     "name": "user-order-api",
-    "description": "先运行 Auth / Register。响应中的 Access Token 自动保存为 Collection 变量；Refresh Cookie 由 Postman Cookie Jar 自动保存。",
+    "description": "先运行 Auth / Register。首次请求会自动生成并保存一个测试邮箱，后续 Login 会复用它；响应中的 Access Token 自动保存为 Collection 变量，Refresh Cookie 由 Postman Cookie Jar 自动保存。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "baseUrl", "value": "http://localhost:8888/api/v1" },
-    { "key": "email", "value": "postman-{{$guid}}@example.com" },
+    { "key": "email", "value": "" },
     { "key": "password", "value": "correct-password" },
     { "key": "accessToken", "value": "" },
     { "key": "userId", "value": "" },
     { "key": "orderId", "value": "" },
     { "key": "idempotencyKey", "value": "" }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.collectionVariables.get('email')) {",
+          "  pm.collectionVariables.set('email', pm.variables.replaceIn('postman-{{$guid}}@example.com'));",
+          "}"
+        ]
+      }
+    }
   ],
   "item": [
     { "name": "Health", "request": { "method": "GET", "url": "{{baseUrl}}/health" } },
