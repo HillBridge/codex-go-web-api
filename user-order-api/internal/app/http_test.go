@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"bytes"
@@ -441,7 +441,7 @@ func TestMySQLAuthenticationAndOrderHTTPFlow(t *testing.T) {
 	})
 }
 
-func newTestServer(t *testing.T) *application {
+func newTestServer(t *testing.T) *Application {
 	t.Helper()
 	server := newServer()
 	t.Cleanup(func() {
@@ -454,7 +454,7 @@ func newTestServer(t *testing.T) *application {
 	return server
 }
 
-func newTestServerWithBootstrapAdmin(t *testing.T) (*application, string) {
+func newTestServerWithBootstrapAdmin(t *testing.T) (*Application, string) {
 	t.Helper()
 	userRepo := user.NewMemoryRepository()
 	authService := newMemoryAuthService(userRepo)

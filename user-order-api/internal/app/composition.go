@@ -30,7 +30,7 @@ func NewMemory(ctx context.Context, logger *slog.Logger, config Config) (*Applic
 	if err := bootstrapAdmin(ctx, logger, service, config); err != nil {
 		return nil, err
 	}
-	return newApplication(logger, users, order.NewMemoryRepository(), service, config), nil
+	return buildApplication(logger, users, order.NewMemoryRepository(), service, config), nil
 }
 
 func NewProduction(ctx context.Context, db *sql.DB, logger *slog.Logger, config Config) (*Application, error) {
@@ -39,14 +39,14 @@ func NewProduction(ctx context.Context, db *sql.DB, logger *slog.Logger, config 
 	if err := bootstrapAdmin(ctx, logger, service, config); err != nil {
 		return nil, err
 	}
-	return newApplication(logger, user.NewMySQLRepository(db), order.NewMySQLRepository(db), service, config), nil
+	return buildApplication(logger, user.NewMySQLRepository(db), order.NewMySQLRepository(db), service, config), nil
 }
 
 func newAuthService(identities auth.IdentityRepository, sessions auth.Repository, config Config) *auth.Service {
 	return auth.NewService(identities, sessions, auth.NewTokenManager([]byte(config.JWTSigningKey), config.JWTIssuer, config.AccessTokenTTL, time.Now), config.RefreshTokenTTL, time.Now)
 }
 
-func newApplication(logger *slog.Logger, users user.Repository, orders order.Repository, service *auth.Service, config Config) *Application {
+func buildApplication(logger *slog.Logger, users user.Repository, orders order.Repository, service *auth.Service, config Config) *Application {
 	return NewWithDependencies(logger, Dependencies{UserRepository: users, OrderRepository: orders, AuthService: service, CookieSecure: config.AuthCookieSecure, CORSOrigins: config.CORSAllowedOrigins, TrustedProxies: config.TrustedProxyCIDRs, RateLimits: security.Limits{LoginPerMinute: config.LoginRateLimitPerMinute, RefreshPerMinute: config.RefreshRateLimitPerMinute, APIPerMinute: config.APIRateLimitPerMinute}})
 }
 
