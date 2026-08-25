@@ -9,6 +9,8 @@
     { "key": "email", "value": "" },
     { "key": "password", "value": "correct-password" },
     { "key": "accessToken", "value": "" },
+    { "key": "accessTokenBeforeLogout", "value": "" },
+    { "key": "revokedAccessToken", "value": "" },
     { "key": "userId", "value": "" },
     { "key": "orderId", "value": "" },
     { "key": "idempotencyKey", "value": "" }
@@ -47,7 +49,19 @@
           "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 200', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('accessToken', pm.response.json().accessToken);"] }}],
           "request": { "method": "POST", "url": "{{baseUrl}}/auth/refresh" }
         },
-        { "name": "Logout", "request": { "method": "POST", "url": "{{baseUrl}}/auth/logout" } }
+        {
+          "name": "Logout",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.collectionVariables.unset('revokedAccessToken');", "pm.collectionVariables.set('accessTokenBeforeLogout', pm.collectionVariables.get('accessToken'));" ] }},
+            { "listen": "test", "script": { "exec": ["pm.test('status is 204', () => pm.response.to.have.status(204));", "if (pm.response.code === 204) { pm.collectionVariables.set('revokedAccessToken', pm.collectionVariables.get('accessTokenBeforeLogout')); }" ] }}
+          ],
+          "request": { "method": "POST", "url": "{{baseUrl}}/auth/logout" }
+        },
+        {
+          "name": "Access Token Is Rejected After Logout",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 401', () => pm.response.to.have.status(401));", "pm.test('error code is UNAUTHENTICATED', () => pm.expect(pm.response.json().code).to.eql('UNAUTHENTICATED'));" ] }}],
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{revokedAccessToken}}" }], "url": "{{baseUrl}}/auth/me" }
+        }
       ]
     },
     {
