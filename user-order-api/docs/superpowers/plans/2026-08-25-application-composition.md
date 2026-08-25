@@ -75,7 +75,7 @@ func (a *Application) Close(ctx context.Context) error
 
 - `NewWithDependencies` must reject neither repositories nor services; tests always provide valid dependencies. Its only job is to construct the same route tree and middleware chain currently created by `newApplicationWithSecurity`.
 
-- [ ] **Step 1: Add a failing application-package test for injected repositories**
+- [x] **Step 1: Add a failing application-package test for injected repositories**
 
 Create `internal/app/application_test.go` in package `app`. Copy the current `TestApplicationUsesProvidedRepositories` into this package and adapt its construction to the new API. Add small package-local HTTP helpers (`postJSON`, `decodeBody`, and `registerAccessToken`) needed only by this new test; do not remove helpers from `cmd/api/server_test.go` until Task 3 moves the full HTTP test suite.
 
@@ -105,7 +105,7 @@ app := NewWithDependencies(logger, Dependencies{
 
 Keep its assertion that registration writes into the injected `userRepo`; this proves the route → handler → service chain receives the supplied repository rather than creating an implicit one.
 
-- [ ] **Step 2: Run the new test and verify it fails because `app` does not exist**
+- [x] **Step 2: Run the new test and verify it fails because `app` does not exist**
 
 Run:
 
@@ -115,7 +115,7 @@ go test ./internal/app -run '^TestApplicationUsesProvidedRepositories$'
 
 Expected: compilation failure reporting that package `internal/app` or `NewWithDependencies` is missing.
 
-- [ ] **Step 3: Implement `Application` and `NewWithDependencies`**
+- [x] **Step 3: Implement `Application` and `NewWithDependencies`**
 
 Move the following code from `cmd/api/server.go` into `internal/app/application.go`, changing package name from `main` to `app`:
 
@@ -137,7 +137,7 @@ authHandler := auth.NewHandler(deps.AuthService, deps.CookieSecure)
 
 Then return `&Application{handler: requestIDMiddleware(requestLogMiddleware(logger, recoveryMiddleware(logger, secured))), auditLogger: auditLogger}`. Keep `ServeHTTP` as a direct delegation and `Close` as `a.auditLogger.Close(ctx)`.
 
-- [ ] **Step 4: Make the moved test pass and run package-local HTTP tests**
+- [x] **Step 4: Make the moved test pass and run package-local HTTP tests**
 
 Run:
 
@@ -147,7 +147,7 @@ go test ./internal/app -run '^TestApplicationUsesProvidedRepositories$'
 
 Expected: PASS. The test must prove the injected user repository contains the registered user after the HTTP request.
 
-- [ ] **Step 5: Run regression tests and commit the isolated boundary move**
+- [x] **Step 5: Run regression tests and commit the isolated boundary move**
 
 Run:
 
