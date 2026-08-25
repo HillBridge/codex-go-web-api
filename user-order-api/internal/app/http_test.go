@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"bridge-go/user-order-api/internal/auth"
 	"bridge-go/user-order-api/internal/order"
 	"bridge-go/user-order-api/internal/platform/database"
 	"bridge-go/user-order-api/internal/platform/testdb"
@@ -202,7 +201,7 @@ func TestUsersMethodNotAllowedReturnsJSONAndAllowHeader(t *testing.T) {
 
 func TestApplicationCloseDrainsAuditEvents(t *testing.T) {
 	var output bytes.Buffer
-	app := newApplication(
+	app := newApplicationForTest(
 		slog.New(slog.NewTextHandler(&output, nil)),
 		user.NewMemoryRepository(),
 		order.NewMemoryRepository(),
@@ -233,7 +232,7 @@ func TestApplicationUsesProvidedRepositories(t *testing.T) {
 	if _, err := authService.BootstrapAdmin(context.Background(), "admin@example.com", "correct-password"); err != nil {
 		t.Fatal(err)
 	}
-	app := newApplication(
+	app := newApplicationForTest(
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 		userRepo,
 		order.NewMemoryRepository(),
@@ -394,9 +393,10 @@ func TestMySQLAuthenticationAndOrderHTTPFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	authRepo := auth.NewMySQLRepository(db)
-	authService := auth.NewService(authRepo, authRepo, auth.NewTokenManager([]byte("test-signing-key-that-is-at-least-32-bytes"), "user-order-api", 15*time.Minute, time.Now), time.Hour, time.Now)
-	app := newApplication(slog.New(slog.NewTextHandler(io.Discard, nil)), user.NewMySQLRepository(db), order.NewMySQLRepository(db), authService, false)
+	app, err := NewProduction(ctx, db, slog.New(slog.NewTextHandler(io.Discard, nil)), testConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
 		defer shutdownCancel()
@@ -461,7 +461,7 @@ func newTestServerWithBootstrapAdmin(t *testing.T) (*Application, string) {
 	if _, err := authService.BootstrapAdmin(context.Background(), "admin@example.com", "correct-password"); err != nil {
 		t.Fatal(err)
 	}
-	server := newApplication(slog.New(slog.NewTextHandler(io.Discard, nil)), userRepo, order.NewMemoryRepository(), authService, false)
+	server := newApplicationForTest(slog.New(slog.NewTextHandler(io.Discard, nil)), userRepo, order.NewMemoryRepository(), authService, false)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()

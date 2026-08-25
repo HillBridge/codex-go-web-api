@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"testing"
 	"time"
 
 	"bridge-go/user-order-api/internal/auth"
@@ -21,7 +20,7 @@ func newServer() *Application {
 	return application
 }
 
-func newApplication(logger *slog.Logger, users user.Repository, orders order.Repository, service *auth.Service, cookieSecure bool) *Application {
+func newApplicationForTest(logger *slog.Logger, users user.Repository, orders order.Repository, service *auth.Service, cookieSecure bool) *Application {
 	return NewWithDependencies(logger, Dependencies{UserRepository: users, OrderRepository: orders, AuthService: service, CookieSecure: cookieSecure, RateLimits: security.Limits{LoginPerMinute: 5, RefreshPerMinute: 20, APIPerMinute: 120}})
 }
 
@@ -35,4 +34,3 @@ func testConfig() Config {
 }
 
 var _ http.Handler = (*Application)(nil)
-var _ = testing.T{}
