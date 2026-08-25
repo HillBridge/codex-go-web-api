@@ -178,9 +178,14 @@ curl -H "Authorization: Bearer $ACCESS_TOKEN" http://localhost:8888/api/v1/order
 
 ```text
 cmd/api
-  main.go          程序入口
-  server.go        组装路由、service、repository
-  server_test.go   HTTP 核心链路测试
+  main.go          读取配置、打开/关闭 MySQL、启动/关闭 HTTP Server
+  config.go        环境变量解析与 HTTP 超时配置
+
+internal/app
+  application.go   路由、HTTP 中间件与 Handler/Service 组装
+  composition.go   NewMemory（测试）与 NewProduction（MySQL）组装入口
+  http_test.go     内存 HTTP 调用链与 MySQL HTTP 集成测试
+  test_helpers_test.go  测试专用依赖注入辅助函数
 
 internal/user
   model.go         User 和 CreateUserRequest
@@ -237,7 +242,9 @@ order.UserFinder
 audit.Logger
 ```
 
-这样 service 不直接绑定具体存储实现，后续可以把内存 repository 换成 MySQL/PostgreSQL repository。
+这样 service 不直接绑定具体存储实现。当前项目使用 MySQL 作为运行时持久化存储，内存 Repository 只用于快速单元测试和 HTTP 测试；将来如需 PostgreSQL，可在保持 Service/Handler 不变的前提下新增 Repository 实现。
+
+应用组装位于 `internal/app`：`NewMemory` 创建共享的内存用户、订单和认证仓储，`NewProduction` 创建 MySQL 仓储。两者都会构造相同的 Handler、Service、路由和中间件。
 
 ### error
 
@@ -312,7 +319,7 @@ platform
 
 ## 下一阶段建议
 
-第二阶段可以加数据库：
+后续可以继续深化数据库能力：
 
 ```text
 PostgreSQL / MySQL

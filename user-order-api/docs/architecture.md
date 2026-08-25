@@ -1,6 +1,6 @@
 # 项目架构与依赖关系
 
-`cmd/api/main.go` 是生产组合根：读取必填 `MYSQL_DSN`、建立并校验 MySQL 连接池、执行嵌入式向前迁移，然后将 MySQL 仓储注入 HTTP 应用。`newServer()` 只保留给内存仓储测试。
+`cmd/api/main.go` 是启动入口：读取必填 `MYSQL_DSN`、建立并校验 MySQL 连接池、执行嵌入式向前迁移，然后调用 `internal/app.NewProduction` 创建 HTTP 应用。`internal/app` 是唯一的应用组合根：负责选择内存或 MySQL 仓储，并组装 Auth、User、Order 的 Service、Handler、路由和中间件。
 
 ![项目架构与依赖关系](images/architecture-overview.svg)
 
@@ -34,8 +34,18 @@ flowchart LR
 1. `main` 读取服务器超时和 `MYSQL_DSN`；DSN 缺失或数据库不可用时启动失败，不会回退到内存数据。
 2. `database.Open` 建立 `database/sql` 连接池：最大连接 10、最大空闲 5、连接生命周期 30 分钟，并在 5 秒内完成 Ping。
 3. `database.ApplyMigrations` 从二进制内嵌的 SQL 文件按文件名顺序执行尚未记录的迁移；DDL 成功后才写入 `schema_migrations`。迁移仅向前，遇错立即停止。
-4. `main` 注入 `user.NewMySQLRepository`、`order.NewMySQLRepository` 和 `auth.NewMySQLRepository`。认证数据与业务数据使用同一个 MySQL 数据库；会话只存 Refresh Token 的 SHA-256 哈希。
-5. 若同时配置 `BOOTSTRAP_ADMIN_EMAIL`、`BOOTSTRAP_ADMIN_PASSWORD`，启动时仅在邮箱不存在时创建管理员。优雅停机的实际关闭顺序为 HTTP → 审计日志 → 数据库连接池。
+4. `main` 调用 `app.NewProduction`；该函数创建 `user.NewMySQLRepository`、`order.NewMySQLRepository` 和 `auth.NewMySQLRepository`，再组装相同的 HTTP 应用。认证数据与业务数据使用同一个 MySQL 数据库；会话只存 Refresh Token 的 SHA-256 哈希。
+5. 若同时配置 `BOOTSTRAP_ADMIN_EMAIL`、`BOOTSTRAP_ADMIN_PASSWORD`，`app.NewProduction` 启动时仅在邮箱不存在时创建管理员。优雅停机的实际关闭顺序为 HTTP → 审计日志 → 数据库连接池。
+
+## 三条组装路径
+
+```text
+运行应用：cmd/api/main.go → app.NewProduction → MySQL Repository → user_order_api
+普通 HTTP 测试：internal/app/http_test.go → app.NewMemory → Memory Repository
+MySQL HTTP 集成测试：internal/app/http_test.go → app.NewProduction → MySQL Repository → user_order_api_test
+```
+
+测试库必须通过 `MYSQL_TEST_DSN` 指向专用的 `user_order_api_test`；未配置该变量时 MySQL 集成测试跳过。内存仓储只用于测试，不是生产数据库不可用时的回退路径。
 
 ## 分层边界
 
