@@ -54,7 +54,7 @@ MySQL HTTP 集成测试：internal/app/http_test.go → app.NewProduction → My
 - Repository 接口隔离存储实现；MySQL 仓储使用 `ExecContext`、`QueryRowContext`/`QueryContext`，内存实现仅服务测试。订单创建以 `orders.idempotency_key` 的唯一约束防止并发重试重复写入；状态流转以 `WHERE status = 'pending'` 的条件更新保证原子性。
 - `order.Service` 通过 `UserFinder`（生产中为用户仓储）确认用户存在；外键冲突也会被转换为客户端可理解的“用户不存在”。
 - `page.Request` 与 `page.Result[T]` 是存储无关的游标分页契约。查询按 `id ASC`，使用 `afterId` 和多取一条记录生成 `nextCursor`。
-- `auth` 负责 bcrypt 密码、短期 HS256 Access JWT、Refresh 会话轮换和退出撤销；`principal` 平台包只承载请求身份上下文，避免认证模块与业务模块相互依赖。
+- `auth` 负责 bcrypt 密码、短期 HS256 Access JWT、Refresh 会话轮换和退出撤销。每个受保护请求都会按 JWT 的 `sid` 查询会话；会话被退出或轮换撤销后，该 Access Token 的下一次请求立即返回 `401`。`principal` 平台包只承载请求身份上下文，避免认证模块与业务模块相互依赖。
 - 普通用户只能读取自己的资料和订单；订单列表在仓储查询中按 `user_id` 过滤。`admin` 才能列出用户、跨用户查看订单或替其他用户创建订单。
 - `security` 在 HTTP 外层执行精确 Origin CORS 和按 IP/路由类别的内存限流。生产 TLS 由反向代理终止，必须启用 `AUTH_COOKIE_SECURE=true`。
 
@@ -66,7 +66,7 @@ MySQL HTTP 集成测试：internal/app/http_test.go → app.NewProduction → My
 | `/api/v1/auth/register` | `POST` | 注册、设置 Refresh Cookie、返回 Access Token，`201` |
 | `/api/v1/auth/login` | `POST` | 登录、设置 Refresh Cookie、返回 Access Token，`200` |
 | `/api/v1/auth/refresh` | `POST` | 轮换 Refresh 会话并返回新 Access Token，`200` |
-| `/api/v1/auth/logout` | `POST` | 撤销 Refresh 会话，`204` |
+| `/api/v1/auth/logout` | `POST` | 撤销 Refresh 会话；该会话的 Access Token 随即失效，`204` |
 | `/api/v1/auth/me` | `GET` | 当前用户公开资料 |
 | `/api/v1/users` | `POST` / `GET` | 仅 `admin` |
 | `/api/v1/users/:id` | `GET` | 本人或 `admin` |

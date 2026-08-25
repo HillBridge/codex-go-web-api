@@ -101,7 +101,7 @@ curl -b cookies.txt -c cookies.txt -X POST http://localhost:8888/api/v1/auth/ref
 curl -b cookies.txt -X POST http://localhost:8888/api/v1/auth/logout
 ```
 
-之后每个受保护请求携带：`-H "Authorization: Bearer $ACCESS_TOKEN"`。缺失或无效令牌返回 `401 UNAUTHENTICATED`；越权返回 `403 FORBIDDEN`。
+之后每个受保护请求携带：`-H "Authorization: Bearer $ACCESS_TOKEN"`。缺失、无效、过期或所属会话已撤销的令牌返回 `401 UNAUTHENTICATED`；越权返回 `403 FORBIDDEN`。调用 logout 后，该会话的 Access Token 在下一次请求立即失效。
 
 ### 创建用户（仅管理员）
 

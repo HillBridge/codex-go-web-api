@@ -36,7 +36,7 @@
 - Access Token 通过 JSON 响应的 `accessToken` 返回，前端仅保存于内存，并通过 `Authorization: Bearer <token>` 调用受保护接口。
 - Refresh Token 使用 `crypto/rand` 随机生成，原文仅以 Cookie 发给浏览器；数据库保存 SHA-256 哈希。Cookie 为 `HttpOnly`、`SameSite=Strict`、路径 `/api/v1/auth`；生产必须启用 `Secure`，本地开发由 `AUTH_COOKIE_SECURE=false` 显式允许 HTTP。
 - `POST /api/v1/auth/refresh` 校验 Cookie 的 Token 哈希、会话状态与过期时间，并在一个数据库事务中吊销旧会话、创建新会话、发送新 Cookie 和 Access Token。旧 Refresh Token 重放一律返回 `401 UNAUTHENTICATED`。
-- `POST /api/v1/auth/logout` 吊销当前 Refresh Token 并清除 Cookie；同一用户的“退出所有设备”不在本阶段提供公开接口，管理员禁用能力由 `auth_version` 预留。已签发 Access Token 最长 15 分钟后自然失效；当前阶段不在每个请求查询会话或用户记录。
+- `POST /api/v1/auth/logout` 吊销当前 Refresh Token 并清除 Cookie；同一用户的“退出所有设备”不在本阶段提供公开接口，管理员禁用能力由 `auth_version` 预留。认证中间件在每个受保护请求查询 JWT 中 `sid` 对应的会话，退出或轮换撤销会话后，已签发的 Access Token 在下一次请求立即失效。
 
 ## 数据模型
 
@@ -89,7 +89,7 @@ sessions
 
 ## 授权中间件与审计
 
-认证中间件解析 JWT，校验签名、issuer、时间和结构化 claims，在 `context.Context` 注入只包含 `UserID`、`Role`、`SessionID` 的 `Principal`。它不在每个业务请求查询会话或用户记录；因此 Access Token 的最长权限滞后窗口固定为 15 分钟。Handler 只从 Principal 获取当前调用者，Service 负责订单所有权和角色规则，Repository 不接收 HTTP 身份信息。
+认证中间件解析 JWT，校验签名、issuer、时间和结构化 claims，再按 `sid` 查询未撤销且未过期的会话，并确认会话用户 ID 与 JWT `sub` 一致；任一步失败均返回 `401 UNAUTHENTICATED`。通过后它在 `context.Context` 注入只包含 `UserID`、`Role`、`SessionID` 的 `Principal`。Handler 只从 Principal 获取当前调用者，Service 负责订单所有权和角色规则，Repository 不接收 HTTP 身份信息。
 
 审计记录以下安全事件：`auth.registered`、`auth.logged_in`、`auth.refreshed`、`auth.logged_out`、`auth.denied` 以及管理员越权范围内的资源操作。审计字段仅包含用户 ID、会话 ID、动作、结果、请求 ID 和资源 ID，不含凭证或密码。
 
