@@ -62,7 +62,7 @@ paths:
   /auth/refresh:
     post:
       security: []
-      summary: 使用 HttpOnly Refresh Cookie 轮换会话
+      summary: 使用 HttpOnly Refresh Cookie 轮换会话；旧会话和对应 Access Token 立即失效
       responses:
         '200':
           $ref: '#/components/responses/AuthResult'
@@ -71,7 +71,7 @@ paths:
   /auth/logout:
     post:
       security: []
-      summary: 撤销当前刷新会话并清除 Cookie
+      summary: 撤销当前刷新会话并清除 Cookie；对应 Access Token 的下一次请求返回 401
       responses:
         '204':
           description: 已退出登录

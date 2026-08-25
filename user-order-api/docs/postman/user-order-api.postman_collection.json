@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "user-order-api",
-    "description": "先运行 Auth / Register。首次请求会自动生成并保存一个测试邮箱，后续 Login 会复用它；响应中的 Access Token 自动保存为 Collection 变量，Refresh Cookie 由 Postman Cookie Jar 自动保存。",
+    "description": "先运行 Auth / Register。首次请求会自动生成并保存一个测试邮箱，后续 Login 会复用它；响应中的 Access Token 自动保存为 Collection 变量，Refresh Cookie 由 Postman Cookie Jar 自动保存。完整的 A/B 权限、Token 撤销与管理员验收请按顺序运行“Stage 7 Acceptance”文件夹。",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -14,6 +14,18 @@
     { "key": "userId", "value": "" },
     { "key": "orderId", "value": "" },
     { "key": "idempotencyKey", "value": "" }
+    ,{ "key": "acceptanceUserAEmail", "value": "" }
+    ,{ "key": "acceptanceUserBEmail", "value": "" }
+    ,{ "key": "acceptanceUserAToken", "value": "" }
+    ,{ "key": "acceptanceUserBToken", "value": "" }
+    ,{ "key": "acceptanceUserAID", "value": "" }
+    ,{ "key": "acceptanceUserBID", "value": "" }
+    ,{ "key": "acceptanceOrderID", "value": "" }
+    ,{ "key": "acceptanceOldAccessToken", "value": "" }
+    ,{ "key": "acceptanceFreshAccessToken", "value": "" }
+    ,{ "key": "adminEmail", "value": "" }
+    ,{ "key": "adminPassword", "value": "" }
+    ,{ "key": "adminAccessToken", "value": "" }
   ],
   "event": [
     {
@@ -84,6 +96,76 @@
         { "name": "Get Order", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/orders/{{orderId}}" } },
         { "name": "Pay Order", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/orders/{{orderId}}/pay" } },
         { "name": "Cancel Order", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }], "url": "{{baseUrl}}/orders/{{orderId}}/cancel" } }
+      ]
+    },
+    {
+      "name": "Stage 7 Acceptance",
+      "description": "按顺序运行此文件夹。它使用独立的 A/B 测试账号。运行管理员请求前，请先以 BOOTSTRAP_ADMIN_EMAIL 和 BOOTSTRAP_ADMIN_PASSWORD 启动服务，并将相同值填入 Collection Variables 的 adminEmail/adminPassword。",
+      "event": [{ "listen": "prerequest", "script": { "exec": ["if (!pm.collectionVariables.get('acceptanceUserAEmail')) { pm.collectionVariables.set('acceptanceUserAEmail', pm.variables.replaceIn('acceptance-a-{{$guid}}@example.com')); }", "if (!pm.collectionVariables.get('acceptanceUserBEmail')) { pm.collectionVariables.set('acceptanceUserBEmail', pm.variables.replaceIn('acceptance-b-{{$guid}}@example.com')); }"] }}],
+      "item": [
+        {
+          "name": "Register User A",
+          "event": [
+            { "listen": "prerequest", "script": { "exec": ["pm.collectionVariables.set('acceptanceUserAEmail', pm.variables.replaceIn('acceptance-a-{{$guid}}@example.com'));", "pm.collectionVariables.set('acceptanceUserBEmail', pm.variables.replaceIn('acceptance-b-{{$guid}}@example.com'));", "['acceptanceUserAToken', 'acceptanceUserBToken', 'acceptanceUserAID', 'acceptanceUserBID', 'acceptanceOrderID', 'acceptanceOldAccessToken', 'acceptanceFreshAccessToken', 'adminAccessToken'].forEach(key => pm.collectionVariables.unset(key));"] }},
+            { "listen": "test", "script": { "exec": ["pm.test('status is 201', () => pm.response.to.have.status(201));", "const body = pm.response.json();", "pm.collectionVariables.set('acceptanceUserAToken', body.accessToken);", "pm.collectionVariables.set('acceptanceUserAID', body.user.id);"] }}
+          ],
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Acceptance User A\",\n  \"email\": \"{{acceptanceUserAEmail}}\",\n  \"password\": \"{{password}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/auth/register" }
+        },
+        {
+          "name": "User A Creates Order",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 201', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('acceptanceOrderID', pm.response.json().id);"] }}],
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{acceptanceUserAToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"amount\": 2599\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/orders" }
+        },
+        {
+          "name": "Register User B",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 201', () => pm.response.to.have.status(201));", "const body = pm.response.json();", "pm.collectionVariables.set('acceptanceUserBToken', body.accessToken);", "pm.collectionVariables.set('acceptanceUserBID', body.user.id);"] }}],
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"name\": \"Acceptance User B\",\n  \"email\": \"{{acceptanceUserBEmail}}\",\n  \"password\": \"{{password}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/auth/register" }
+        },
+        {
+          "name": "User B Is Forbidden From User A Order",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 403', () => pm.response.to.have.status(403));", "pm.test('error code is FORBIDDEN', () => pm.expect(pm.response.json().code).to.eql('FORBIDDEN'));"] }}],
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{acceptanceUserBToken}}" }], "url": "{{baseUrl}}/orders/{{acceptanceOrderID}}" }
+        },
+        {
+          "name": "Login User A Before Refresh",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 200', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('acceptanceOldAccessToken', pm.response.json().accessToken);"] }}],
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{acceptanceUserAEmail}}\",\n  \"password\": \"{{password}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/auth/login" }
+        },
+        {
+          "name": "Refresh User A",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 200', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('acceptanceFreshAccessToken', pm.response.json().accessToken);"] }}],
+          "request": { "method": "POST", "url": "{{baseUrl}}/auth/refresh" }
+        },
+        {
+          "name": "Old Access Token Is Rejected After Refresh",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 401', () => pm.response.to.have.status(401));", "pm.test('error code is UNAUTHENTICATED', () => pm.expect(pm.response.json().code).to.eql('UNAUTHENTICATED'));"] }}],
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{acceptanceOldAccessToken}}" }], "url": "{{baseUrl}}/auth/me" }
+        },
+        {
+          "name": "Logout User A",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 204', () => pm.response.to.have.status(204));"] }}],
+          "request": { "method": "POST", "url": "{{baseUrl}}/auth/logout" }
+        },
+        {
+          "name": "Fresh Access Token Is Rejected After Logout",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 401', () => pm.response.to.have.status(401));", "pm.test('error code is UNAUTHENTICATED', () => pm.expect(pm.response.json().code).to.eql('UNAUTHENTICATED'));"] }}],
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{acceptanceFreshAccessToken}}" }], "url": "{{baseUrl}}/auth/me" }
+        },
+        {
+          "name": "Login Bootstrap Admin",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 200', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('adminAccessToken', pm.response.json().accessToken);"] }}],
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/auth/login" }
+        },
+        {
+          "name": "Admin Creates Order For User B",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 201', () => pm.response.to.have.status(201));", "pm.test('order belongs to User B', () => pm.expect(pm.response.json().userId).to.eql(Number(pm.collectionVariables.get('acceptanceUserBID'))));"] }}],
+          "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"userId\": {{acceptanceUserBID}},\n  \"amount\": 3000\n}", "options": { "raw": { "language": "json" } } }, "url": "{{baseUrl}}/orders" }
+        },
+        {
+          "name": "Admin Lists Cross-User Orders",
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('status is 200', () => pm.response.to.have.status(200));", "const userIDs = pm.response.json().items.map(order => order.userId);", "pm.test('contains User A and User B orders', () => { pm.expect(userIDs).to.include(Number(pm.collectionVariables.get('acceptanceUserAID'))); pm.expect(userIDs).to.include(Number(pm.collectionVariables.get('acceptanceUserBID'))); });"] }}],
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{adminAccessToken}}" }], "url": "{{baseUrl}}/orders?limit=20" }
+        }
       ]
     }
   ]

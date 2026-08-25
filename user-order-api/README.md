@@ -81,6 +81,16 @@ go test ./...
 
 在 Postman 点击 **Import**，选择该 Collection 文件即可。先调用 **Auth / Register**：它会自动保存 `accessToken`、`userId`，Postman 也会保存服务设置的 Refresh Cookie。随后可调用 **Orders / Create Order**；它会生成幂等键和 `orderId`。**Refresh** 会轮换 Access Token，**Replay Create Order** 可验证网络重试不会重复创建订单。
 
+完整验收请按顺序运行 **Stage 7 Acceptance** 文件夹：它会注册用户 A/B、验证 B 访问 A 的订单返回 `403`、验证 Refresh 与 Logout 后旧 Access Token 立即返回 `401`。其中管理员步骤要求服务启动前已设置 `BOOTSTRAP_ADMIN_EMAIL`、`BOOTSTRAP_ADMIN_PASSWORD`，并将相同值填入 Collection Variables 的 `adminEmail`、`adminPassword`。
+
+可直接用下列命令启动阶段 7 验收服务；它会使用专用测试库、允许本地 HTTP Cookie，并默认创建 `stage7-admin@example.com` / `correct-password` 管理员：
+
+```bash
+./scripts/start-stage7.sh
+```
+
+如需使用其他管理员账号，在命令前设置 `BOOTSTRAP_ADMIN_EMAIL`、`BOOTSTRAP_ADMIN_PASSWORD`；Postman 的 `adminEmail`、`adminPassword` 必须填入相同值。
+
 ## API
 
 ### 注册、登录与 Token 使用

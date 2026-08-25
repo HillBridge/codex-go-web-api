@@ -441,6 +441,93 @@ func TestMySQLAuthenticationAndOrderHTTPFlow(t *testing.T) {
 	})
 }
 
+func TestMySQLSessionRevocationAuthorizationAndAdminHTTPFlow(t *testing.T) {
+	dsn := testdb.RequireDSN(t, os.Getenv("MYSQL_TEST_DSN"))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	db, err := database.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.ApplyMigrations(ctx, db); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	config := testConfig()
+	config.BootstrapAdminEmail = "admin-" + suffix + "@example.com"
+	config.BootstrapAdminPassword = "correct-password"
+	app, err := NewProduction(ctx, db, slog.New(slog.NewTextHandler(io.Discard, nil)), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+		defer shutdownCancel()
+		_ = app.Close(shutdownCtx)
+	})
+
+	adaAccessToken, adaID, adaRefreshCookie := registerAccessTokenAndCookie(t, app, "ada-"+suffix+"@example.com")
+	graceAccessToken, graceID := registerAccessToken(t, app, "grace-"+suffix+"@example.com")
+	orderBody := postJSONWithHeader(t, app, "/api/v1/orders", map[string]any{"amount": 2599}, "Authorization", "Bearer "+adaAccessToken, http.StatusCreated)
+	var adaOrder struct {
+		ID int64 `json:"id"`
+	}
+	decodeBody(t, orderBody, &adaOrder)
+	t.Cleanup(func() {
+		_, _ = db.Exec("DELETE FROM sessions WHERE user_id IN (?, ?, (SELECT id FROM users WHERE email = ?))", adaID, graceID, config.BootstrapAdminEmail)
+		_, _ = db.Exec("DELETE FROM orders WHERE user_id IN (?, ?)", adaID, graceID)
+		_, _ = db.Exec("DELETE FROM users WHERE id IN (?, ?) OR email = ?", adaID, graceID, config.BootstrapAdminEmail)
+	})
+
+	forbidden := getWithHeader(t, app, "/api/v1/orders/"+strconv.FormatInt(adaOrder.ID, 10), "Authorization", "Bearer "+graceAccessToken, http.StatusForbidden)
+	assertErrorCode(t, forbidden, "FORBIDDEN")
+
+	refresh := httptest.NewRequest(http.MethodPost, "/api/v1/auth/refresh", nil)
+	refresh.AddCookie(adaRefreshCookie)
+	refreshRecorder := httptest.NewRecorder()
+	app.ServeHTTP(refreshRecorder, refresh)
+	if refreshRecorder.Code != http.StatusOK {
+		t.Fatalf("refresh = %d %s", refreshRecorder.Code, refreshRecorder.Body.String())
+	}
+	var refreshed struct {
+		AccessToken string `json:"accessToken"`
+	}
+	decodeBody(t, refreshRecorder.Body.Bytes(), &refreshed)
+	oldAccess := getWithHeader(t, app, "/api/v1/auth/me", "Authorization", "Bearer "+adaAccessToken, http.StatusUnauthorized)
+	assertErrorCode(t, oldAccess, "UNAUTHENTICATED")
+
+	logout := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	logout.AddCookie(refreshRecorder.Result().Cookies()[0])
+	logoutRecorder := httptest.NewRecorder()
+	app.ServeHTTP(logoutRecorder, logout)
+	if logoutRecorder.Code != http.StatusNoContent {
+		t.Fatalf("logout = %d %s", logoutRecorder.Code, logoutRecorder.Body.String())
+	}
+	revokedAccess := getWithHeader(t, app, "/api/v1/auth/me", "Authorization", "Bearer "+refreshed.AccessToken, http.StatusUnauthorized)
+	assertErrorCode(t, revokedAccess, "UNAUTHENTICATED")
+
+	adminAccessToken := loginAccessToken(t, app, config.BootstrapAdminEmail, config.BootstrapAdminPassword)
+	postJSONWithHeader(t, app, "/api/v1/orders", map[string]any{"userId": graceID, "amount": 3000}, "Authorization", "Bearer "+adminAccessToken, http.StatusCreated)
+	adminOrders := getWithHeader(t, app, "/api/v1/orders", "Authorization", "Bearer "+adminAccessToken, http.StatusOK)
+	var listed struct {
+		Items []struct {
+			UserID int64 `json:"userId"`
+		} `json:"items"`
+	}
+	decodeBody(t, adminOrders, &listed)
+	var hasAdaOrder, hasGraceOrder bool
+	for _, item := range listed.Items {
+		hasAdaOrder = hasAdaOrder || item.UserID == adaID
+		hasGraceOrder = hasGraceOrder || item.UserID == graceID
+	}
+	if !hasAdaOrder || !hasGraceOrder {
+		t.Fatalf("admin orders = %+v, want Ada and Grace orders", listed.Items)
+	}
+}
+
 func newTestServer(t *testing.T) *Application {
 	t.Helper()
 	server := newServer()
@@ -489,6 +576,29 @@ func registerAccessToken(t *testing.T, handler http.Handler, email string) (stri
 	}
 	decodeBody(t, rec.Body.Bytes(), &response)
 	return response.AccessToken, response.User.ID
+}
+
+func registerAccessTokenAndCookie(t *testing.T, handler http.Handler, email string) (string, int64, *http.Cookie) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(`{"name":"Ada","email":"`+email+`","password":"correct-password"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("register cookies = %+v, want one refresh cookie", cookies)
+	}
+	var response struct {
+		AccessToken string `json:"accessToken"`
+		User        struct {
+			ID int64 `json:"id"`
+		} `json:"user"`
+	}
+	decodeBody(t, rec.Body.Bytes(), &response)
+	return response.AccessToken, response.User.ID, cookies[0]
 }
 
 func loginAccessToken(t *testing.T, handler http.Handler, email, password string) string {

@@ -42,7 +42,7 @@ flowchart LR
 ```text
 运行应用：cmd/api/main.go → app.NewProduction → MySQL Repository → user_order_api
 普通 HTTP 测试：internal/app/http_test.go → app.NewMemory → Memory Repository
-MySQL HTTP 集成测试：internal/app/http_test.go → app.NewProduction → MySQL Repository → user_order_api_test
+MySQL HTTP 集成测试：internal/app/http_test.go → app.NewProduction → MySQL Repository → user_order_api_test（认证、会话撤销、A/B 订单归属与管理员权限）
 ```
 
 测试库必须通过 `MYSQL_TEST_DSN` 指向专用的 `user_order_api_test`；未配置该变量时 MySQL 集成测试跳过。内存仓储只用于测试，不是生产数据库不可用时的回退路径。
