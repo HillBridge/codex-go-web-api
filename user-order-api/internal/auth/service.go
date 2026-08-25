@@ -49,7 +49,7 @@ func NewService(identities IdentityRepository, sessions Repository, tokens *Toke
 }
 
 func (s *Service) RequireBearer(next http.Handler) http.Handler {
-	return RequireBearer(s.tokens, next)
+	return requireBearer(s.tokens, s.sessions, s.now, next)
 }
 
 func (s *Service) SetAuditLogger(logger audit.Logger) { s.audit = logger }

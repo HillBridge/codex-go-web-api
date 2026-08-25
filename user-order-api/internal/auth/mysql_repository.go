@@ -93,6 +93,19 @@ func (r *MySQLRepository) FindActiveByTokenHash(ctx context.Context, hash string
 	return item, nil
 }
 
+func (r *MySQLRepository) FindActiveByID(ctx context.Context, id string, now time.Time) (Session, error) {
+	item, err := scanSession(r.db.QueryRowContext(ctx, `
+		SELECT id, user_id, token_hash, expires_at, revoked_at, created_at, last_used_at
+		FROM sessions WHERE id = ? AND revoked_at IS NULL AND expires_at > ?`, id, now.UTC()))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, ErrSessionNotFound
+	}
+	if err != nil {
+		return Session{}, fmt.Errorf("find active session by ID: %w", err)
+	}
+	return item, nil
+}
+
 func (r *MySQLRepository) Rotate(ctx context.Context, id string, replacement NewSession) (Session, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

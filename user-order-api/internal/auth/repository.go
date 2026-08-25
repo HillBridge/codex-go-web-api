@@ -12,6 +12,7 @@ var ErrSessionNotFound = errors.New("session not found")
 type Repository interface {
 	Create(context.Context, NewSession) (Session, error)
 	FindActiveByTokenHash(context.Context, string, time.Time) (Session, error)
+	FindActiveByID(context.Context, string, time.Time) (Session, error)
 	Rotate(context.Context, string, NewSession) (Session, error)
 	Revoke(context.Context, string, time.Time) error
 }
@@ -51,6 +52,19 @@ func (r *MemoryRepository) FindActiveByTokenHash(ctx context.Context, hash strin
 	}
 	item := r.sessions[id]
 	if item.RevokedAt != nil || !item.ExpiresAt.After(now) {
+		return Session{}, ErrSessionNotFound
+	}
+	return item, nil
+}
+
+func (r *MemoryRepository) FindActiveByID(ctx context.Context, id string, now time.Time) (Session, error) {
+	if err := ctx.Err(); err != nil {
+		return Session{}, err
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	item, exists := r.sessions[id]
+	if !exists || item.RevokedAt != nil || !item.ExpiresAt.After(now) {
 		return Session{}, ErrSessionNotFound
 	}
 	return item, nil

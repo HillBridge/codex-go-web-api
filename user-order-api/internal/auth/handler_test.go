@@ -127,7 +127,7 @@ func TestBearerMiddlewareAddsPrincipalAndRejectsMissingToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := RequireBearer(service.tokens, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := service.RequireBearer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := PrincipalFromContext(r.Context())
 		if !ok || principal.UserID != result.Identity.ID {
 			t.Fatal("missing principal")
@@ -145,5 +145,33 @@ func TestBearerMiddlewareAddsPrincipalAndRejectsMissingToken(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("authenticated status = %d", rec.Code)
+	}
+}
+
+func TestBearerMiddlewareRejectsAccessTokenAfterLogout(t *testing.T) {
+	service := newTestService(t)
+	result, err := service.Register(context.Background(), RegisterRequest{Name: "Ada", Email: "ada@example.com", Password: "correct-password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := service.RequireBearer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Authorization", "Bearer "+result.AccessToken)
+	beforeLogout := httptest.NewRecorder()
+	handler.ServeHTTP(beforeLogout, request)
+	if beforeLogout.Code != http.StatusNoContent {
+		t.Fatalf("before logout status = %d, want 204", beforeLogout.Code)
+	}
+
+	if err := service.Logout(context.Background(), result.RefreshToken); err != nil {
+		t.Fatal(err)
+	}
+	afterLogout := httptest.NewRecorder()
+	handler.ServeHTTP(afterLogout, request)
+	if afterLogout.Code != http.StatusUnauthorized {
+		t.Fatalf("after logout status = %d, want 401", afterLogout.Code)
 	}
 }
