@@ -10,11 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"bridge-go/user-order-api/internal/auth"
-	"bridge-go/user-order-api/internal/order"
+	"bridge-go/user-order-api/internal/app"
 	"bridge-go/user-order-api/internal/platform/database"
-	"bridge-go/user-order-api/internal/platform/security"
-	"bridge-go/user-order-api/internal/user"
 )
 
 func main() {
@@ -48,35 +45,19 @@ func main() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	authRepo := auth.NewMySQLRepository(db)
-	authService := auth.NewService(
-		authRepo,
-		authRepo,
-		auth.NewTokenManager([]byte(config.JWTSigningKey), config.JWTIssuer, config.AccessTokenTTL, time.Now),
-		config.RefreshTokenTTL,
-		time.Now,
-	)
-	if config.BootstrapAdminEmail != "" {
-		startupCtx, cancelStartup = context.WithTimeout(context.Background(), 10*time.Second)
-		created, err := authService.BootstrapAdmin(startupCtx, config.BootstrapAdminEmail, config.BootstrapAdminPassword)
-		cancelStartup()
-		if err != nil {
-			log.Fatal(err)
-		}
-		if created {
-			log.Printf("bootstrap admin account created")
-		}
+	startupCtx, cancelStartup = context.WithTimeout(context.Background(), 10*time.Second)
+	application, err := app.NewProduction(startupCtx, db, logger, app.Config{
+		JWTSigningKey: config.JWTSigningKey, JWTIssuer: config.JWTIssuer,
+		AccessTokenTTL: config.AccessTokenTTL, RefreshTokenTTL: config.RefreshTokenTTL,
+		AuthCookieSecure: config.AuthCookieSecure, CORSAllowedOrigins: config.CORSAllowedOrigins,
+		TrustedProxyCIDRs:       config.TrustedProxyCIDRs,
+		LoginRateLimitPerMinute: config.LoginRateLimitPerMinute, RefreshRateLimitPerMinute: config.RefreshRateLimitPerMinute, APIRateLimitPerMinute: config.APIRateLimitPerMinute,
+		BootstrapAdminEmail: config.BootstrapAdminEmail, BootstrapAdminPassword: config.BootstrapAdminPassword,
+	})
+	cancelStartup()
+	if err != nil {
+		log.Fatal(err)
 	}
-	application := newApplicationWithSecurity(
-		logger,
-		user.NewMySQLRepository(db),
-		order.NewMySQLRepository(db),
-		authService,
-		config.AuthCookieSecure,
-		config.CORSAllowedOrigins,
-		config.TrustedProxyCIDRs,
-		security.Limits{LoginPerMinute: config.LoginRateLimitPerMinute, RefreshPerMinute: config.RefreshRateLimitPerMinute, APIPerMinute: config.APIRateLimitPerMinute},
-	)
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
 		defer cancel()

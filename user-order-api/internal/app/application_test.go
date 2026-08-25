@@ -61,6 +61,33 @@ func TestApplicationUsesProvidedRepositories(t *testing.T) {
 	}
 }
 
+func TestNewMemoryRegistersThenCreatesOrder(t *testing.T) {
+	application, err := NewMemory(context.Background(), slog.New(slog.NewTextHandler(io.Discard, nil)), Config{JWTSigningKey: "test-signing-key-that-is-at-least-32-bytes", JWTIssuer: "user-order-api", AccessTokenTTL: time.Hour, RefreshTokenTTL: time.Hour, LoginRateLimitPerMinute: 5, RefreshRateLimitPerMinute: 20, APIRateLimitPerMinute: 120})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = application.Close(context.Background()) })
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewBufferString(`{"name":"Ada","email":"ada@example.com","password":"correct-password"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	application.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var registered struct {
+		AccessToken string `json:"accessToken"`
+	}
+	decodeBody(t, rec.Body.Bytes(), &registered)
+	orderReq := httptest.NewRequest(http.MethodPost, "/api/v1/orders", bytes.NewBufferString(`{"amount":2599}`))
+	orderReq.Header.Set("Content-Type", "application/json")
+	orderReq.Header.Set("Authorization", "Bearer "+registered.AccessToken)
+	orderRec := httptest.NewRecorder()
+	application.ServeHTTP(orderRec, orderReq)
+	if orderRec.Code != http.StatusCreated {
+		t.Fatalf("order status = %d: %s", orderRec.Code, orderRec.Body.String())
+	}
+}
+
 func loginAccessToken(t *testing.T, handler http.Handler, email, password string) string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"email":"`+email+`","password":"`+password+`"}`))
