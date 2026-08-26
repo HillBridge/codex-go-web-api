@@ -121,6 +121,7 @@ go test ./...
 - Postman Collection：[docs/postman/user-order-api.postman_collection.json](docs/postman/user-order-api.postman_collection.json)
 - 实施阶段与完成状态：[docs/implementation-roadmap.md](docs/implementation-roadmap.md)
 - 本地 Docker 与 Prometheus 使用说明：[docs/local-docker-prometheus.md](docs/local-docker-prometheus.md)
+- 阶段 6 认证、授权与基础安全说明：[docs/phase-6-authentication-authorization-security.md](docs/phase-6-authentication-authorization-security.md)
 
 在 Postman 点击 **Import**，选择该 Collection 文件即可。先调用 **Auth / Register**：它会自动保存 `accessToken`、`userId`，Postman 也会保存服务设置的 Refresh Cookie。随后可调用 **Orders / Create Order**；它会生成幂等键和 `orderId`。**Refresh** 会轮换 Access Token，**Replay Create Order** 可验证网络重试不会重复创建订单。
 
