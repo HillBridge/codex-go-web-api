@@ -17,6 +17,7 @@ import (
 	"bridge-go/user-order-api/internal/platform/observability"
 	"bridge-go/user-order-api/internal/platform/security"
 	"bridge-go/user-order-api/internal/user"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const apiV1Prefix = "/api/v1"
@@ -127,13 +128,18 @@ func requestLogMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 		recorder := &statusRecorder{ResponseWriter: w}
 		next.ServeHTTP(recorder, r)
 
-		logger.InfoContext(r.Context(), "request",
+		fields := []any{
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", recorder.statusCode(),
 			"duration", time.Since(started),
 			"request_id", requestIDFromContext(r.Context()),
-		)
+		}
+		spanContext := trace.SpanContextFromContext(r.Context())
+		if spanContext.IsValid() {
+			fields = append(fields, "trace_id", spanContext.TraceID().String(), "span_id", spanContext.SpanID().String())
+		}
+		logger.InfoContext(r.Context(), "request", fields...)
 	})
 }
 

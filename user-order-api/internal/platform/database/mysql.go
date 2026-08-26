@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/XSAM/otelsql"
 	_ "github.com/go-sql-driver/mysql"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -17,8 +19,15 @@ const (
 )
 
 // Open creates and verifies a MySQL connection pool.
-func Open(ctx context.Context, dsn string) (*sql.DB, error) {
-	db, err := sql.Open("mysql", dsn)
+func Open(ctx context.Context, dsn string, providers ...trace.TracerProvider) (*sql.DB, error) {
+	provider := trace.NewNoopTracerProvider()
+	if len(providers) > 0 && providers[0] != nil {
+		provider = providers[0]
+	}
+	db, err := otelsql.Open("mysql", dsn,
+		otelsql.WithTracerProvider(provider),
+		otelsql.WithSpanOptions(otelsql.SpanOptions{DisableQuery: true}),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("open MySQL: %w", err)
 	}

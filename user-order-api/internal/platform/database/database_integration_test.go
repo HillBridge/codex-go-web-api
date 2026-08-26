@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"bridge-go/user-order-api/internal/platform/testdb"
 )
@@ -81,6 +83,52 @@ func TestApplyMigrationsIsIdempotentAndCreatesForeignKey(t *testing.T) {
 	var mysqlErr *mysql.MySQLError
 	if !errors.As(err, &mysqlErr) || mysqlErr.Number != 1452 {
 		t.Fatalf("foreign-key error = %v, want MySQL error 1452", err)
+	}
+}
+
+func TestOpenProducesTraceForMySQLOperation(t *testing.T) {
+	dsn := testdb.RequireDSN(t, os.Getenv("MYSQL_TEST_DSN"))
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	db, err := Open(ctx, dsn, provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	parentCtx, parent := provider.Tracer("test").Start(ctx, "request")
+	defer parent.End()
+	var result int
+	if err := db.QueryRowContext(parentCtx, "SELECT 1").Scan(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result != 1 {
+		t.Fatalf("query result = %d, want 1", result)
+	}
+
+	spans := recorder.Ended()
+	if len(spans) == 0 {
+		t.Fatal("SQL operation produced no spans")
+	}
+	foundChild := false
+	for _, span := range spans {
+		if span.Parent().SpanID() == parent.SpanContext().SpanID() {
+			foundChild = true
+			if span.Attributes() != nil {
+				for _, attribute := range span.Attributes() {
+					if attribute.Value.AsString() == dsn || attribute.Value.AsString() == "app_password" {
+						t.Fatalf("SQL span leaked credential/DSN attribute %q", attribute.Key)
+					}
+				}
+			}
+		}
+	}
+	if !foundChild {
+		t.Fatal("SQL span was not a child of request span")
 	}
 }
 

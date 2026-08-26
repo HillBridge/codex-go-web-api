@@ -47,7 +47,7 @@ func TestMiddlewareRecordsFixedRouteAndStatus(t *testing.T) {
 }
 
 func TestRegistryExportsDatabaseAndAuditStatistics(t *testing.T) {
-	_, registry := New(fakeDatabaseStats{open: 4, inUse: 2, idle: 2}, fakeAuditStats{pending: 3, dropped: 1})
+	_, registry := New(fakeDatabaseStats{open: 4, inUse: 2, idle: 2, maxOpen: 10}, fakeAuditStats{pending: 3, dropped: 1})
 
 	if got := gatherMetric(t, registry, "user_order_api_mysql_open_connections", nil); got != 4 {
 		t.Fatalf("open connections = %v, want 4", got)
@@ -57,6 +57,9 @@ func TestRegistryExportsDatabaseAndAuditStatistics(t *testing.T) {
 	}
 	if got := gatherMetric(t, registry, "user_order_api_mysql_idle_connections", nil); got != 2 {
 		t.Fatalf("idle connections = %v, want 2", got)
+	}
+	if got := gatherMetric(t, registry, "user_order_api_mysql_max_open_connections", nil); got != 10 {
+		t.Fatalf("max open connections = %v, want 10", got)
 	}
 	if got := gatherMetric(t, registry, "user_order_api_audit_queue_pending", nil); got != 3 {
 		t.Fatalf("audit queue pending = %v, want 3", got)
@@ -75,13 +78,14 @@ func (f fakeAuditStats) Pending() int    { return f.pending }
 func (f fakeAuditStats) Dropped() uint64 { return f.dropped }
 
 type fakeDatabaseStats struct {
-	open  int
-	inUse int
-	idle  int
+	open    int
+	inUse   int
+	idle    int
+	maxOpen int
 }
 
 func (f fakeDatabaseStats) Stats() sql.DBStats {
-	return sql.DBStats{OpenConnections: f.open, InUse: f.inUse, Idle: f.idle}
+	return sql.DBStats{OpenConnections: f.open, InUse: f.inUse, Idle: f.idle, MaxOpenConnections: f.maxOpen}
 }
 
 func gatherMetric(t *testing.T, registry *prometheus.Registry, name string, labels map[string]string) float64 {

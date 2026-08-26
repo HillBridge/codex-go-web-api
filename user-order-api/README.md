@@ -38,7 +38,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-这会启动 API（`http://localhost:8888`）、MySQL（供 Navicat 使用的 `127.0.0.1:3307`）和 Prometheus（`http://localhost:9090`）。容器内的 API 通过内部地址 `mysql:3306` 访问数据库，外部不应在生产环境映射 MySQL 端口。
+这会启动 API（`http://localhost:8888`）、MySQL（供 Navicat 使用的 `127.0.0.1:3307`）、Prometheus（`http://localhost:9090`）、Jaeger（`http://localhost:16686`）和 Alertmanager（`http://localhost:9093`）。容器内的 API 通过内部地址 `mysql:3306` 访问数据库，外部不应在生产环境映射 MySQL 端口。
 
 常用操作：
 
@@ -92,6 +92,9 @@ user_order_api_audit_queue_pending
 | `WRITE_TIMEOUT` | `15s` | 写响应超时。 |
 | `IDLE_TIMEOUT` | `60s` | keep-alive 空闲连接超时。 |
 | `SHUTDOWN_TIMEOUT` | `10s` | 收到中断或 `SIGTERM` 后的优雅关闭等待时间。 |
+| `OTEL_SERVICE_NAME` | `user-order-api` | Jaeger 中显示的服务名。 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | 空（Compose 为 `jaeger:4317`） | OTLP/gRPC Trace 接收端点；为空时不导出 Trace。 |
+| `OTEL_EXPORTER_OTLP_INSECURE` | `false`（Compose 为 `true`） | 是否使用明文 OTLP；仅本地 Compose 网络使用 `true`。 |
 
 超时变量使用 Go duration 格式，例如 `WRITE_TIMEOUT=20s`。本地 MySQL 配置见 [.env.example](.env.example)；真实凭据应通过环境变量注入，`.env` 不会提交。服务会在收到中断或 `SIGTERM` 时停止接收新请求，并等待在途请求完成。
 

@@ -90,6 +90,27 @@ func TestLoadConfigUsesAuthSecurityDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigParsesOpenTelemetrySettings(t *testing.T) {
+	config, err := loadConfig(testEnvironment(map[string]string{
+		"OTEL_SERVICE_NAME":           "orders-local",
+		"OTEL_EXPORTER_OTLP_ENDPOINT": "jaeger:4317",
+		"OTEL_EXPORTER_OTLP_INSECURE": "true",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.OTelServiceName != "orders-local" || config.OTLPGRPCEndpoint != "jaeger:4317" || !config.OTLPGRPCInsecure {
+		t.Fatalf("OTel config = %+v", config)
+	}
+}
+
+func TestLoadConfigRejectsInvalidOTLPInsecure(t *testing.T) {
+	_, err := loadConfig(testEnvironment(map[string]string{"OTEL_EXPORTER_OTLP_INSECURE": "yes"}))
+	if err == nil || err.Error() != "OTEL_EXPORTER_OTLP_INSECURE must be true or false" {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+}
+
 func TestLoadConfigParsesAuthSecuritySettings(t *testing.T) {
 	config, err := loadConfig(testEnvironment(map[string]string{
 		"JWT_ISSUER":                    "orders.example.com",

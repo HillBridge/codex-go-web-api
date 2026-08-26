@@ -1,0 +1,42 @@
+groups:
+  - name: user-order-api
+    rules:
+      - alert: UserOrderAPIUnavailable
+        expr: up{job="user-order-api"} == 0
+        for: 30s
+        labels:
+          service: user-order-api
+          severity: critical
+        annotations:
+          summary: user-order-api is unavailable
+          description: Prometheus cannot scrape the user-order-api metrics endpoint.
+
+      - alert: UserOrderAPI5xxResponses
+        expr: sum(rate(user_order_api_http_requests_total{status=~"5.."}[5m])) > 0
+        for: 1m
+        labels:
+          service: user-order-api
+          severity: warning
+        annotations:
+          summary: user-order-api is returning 5xx responses
+          description: The API has returned server errors during the last five minutes.
+
+      - alert: AuditEventsDropped
+        expr: increase(user_order_api_audit_dropped_total[5m]) > 0
+        for: 1m
+        labels:
+          service: user-order-api
+          severity: warning
+        annotations:
+          summary: audit events were dropped
+          description: The bounded audit queue has dropped one or more best-effort events.
+
+      - alert: MySQLConnectionPoolSaturated
+        expr: user_order_api_mysql_in_use_connections / user_order_api_mysql_max_open_connections > 0.8
+        for: 2m
+        labels:
+          service: user-order-api
+          severity: warning
+        annotations:
+          summary: MySQL connection pool is saturated
+          description: More than 80 percent of configured MySQL connections are in use.

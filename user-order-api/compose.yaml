@@ -17,15 +17,29 @@ services:
       timeout: 3s
       retries: 20
 
+  jaeger:
+    image: jaegertracing/all-in-one:1.71.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+    volumes:
+      - jaeger_data:/badger
+
   api:
     build: .
     environment:
       MYSQL_DSN: app:app_password@tcp(mysql:3306)/user_order_api?parseTime=true&charset=utf8mb4&loc=UTC
       JWT_SIGNING_KEY: local-development-key-must-be-at-least-32-bytes
       AUTH_COOKIE_SECURE: "false"
+      OTEL_SERVICE_NAME: user-order-api
+      OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
     depends_on:
       mysql:
         condition: service_healthy
+      jaeger:
+        condition: service_started
     ports:
       - "8888:8888"
     healthcheck:
@@ -39,13 +53,27 @@ services:
     command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus"]
     volumes:
       - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
     depends_on:
       api:
         condition: service_healthy
+      alertmanager:
+        condition: service_started
     ports:
       - "9090:9090"
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml", "--storage.path=/alertmanager"]
+    volumes:
+      - ./docker/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "9093:9093"
 
 volumes:
   mysql_data:
   prometheus_data:
+  jaeger_data:
+  alertmanager_data:

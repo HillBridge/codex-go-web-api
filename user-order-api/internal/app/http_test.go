@@ -20,6 +20,7 @@ import (
 	"bridge-go/user-order-api/internal/platform/security"
 	"bridge-go/user-order-api/internal/platform/testdb"
 	"bridge-go/user-order-api/internal/user"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestUserAndOrderFlow(t *testing.T) {
@@ -154,6 +155,31 @@ func TestRequestIDMiddlewarePreservesCallerRequestID(t *testing.T) {
 
 	if got := rec.Header().Get("X-Request-ID"); got != "client-request-123" {
 		t.Fatalf("X-Request-ID = %q, want %q", got, "client-request-123")
+	}
+}
+
+func TestRequestLogMiddlewareIncludesTraceIdentifiersWithoutAuthorization(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&output, nil))
+	handler := requestLogMiddleware(logger, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: trace.TraceID{1},
+		SpanID:  trace.SpanID{2},
+		TraceFlags: trace.FlagsSampled,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/health", nil).WithContext(trace.ContextWithSpanContext(context.Background(), spanContext))
+	req.Header.Set("Authorization", "Bearer do-not-log-this")
+
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	logLine := output.String()
+	if !strings.Contains(logLine, "trace_id=01000000000000000000000000000000") || !strings.Contains(logLine, "span_id=0200000000000000") {
+		t.Fatalf("log line = %q", logLine)
+	}
+	if strings.Contains(logLine, "do-not-log-this") {
+		t.Fatalf("log line leaked Authorization = %q", logLine)
 	}
 }
 

@@ -15,6 +15,9 @@ import (
 
 type serverConfig struct {
 	MySQLDSN                  string
+	OTelServiceName           string
+	OTLPGRPCEndpoint          string
+	OTLPGRPCInsecure          bool
 	JWTSigningKey             string
 	JWTIssuer                 string
 	AccessTokenTTL            time.Duration
@@ -38,6 +41,7 @@ type serverConfig struct {
 func defaultServerConfig() serverConfig {
 	return serverConfig{
 		Addr:                      ":8888",
+		OTelServiceName:           "user-order-api",
 		JWTIssuer:                 "user-order-api",
 		AccessTokenTTL:            15 * time.Minute,
 		RefreshTokenTTL:           7 * 24 * time.Hour,
@@ -106,6 +110,17 @@ func loadConfig(getenv func(string) string) (serverConfig, error) {
 
 	if raw := strings.TrimSpace(getenv("JWT_ISSUER")); raw != "" {
 		config.JWTIssuer = raw
+	}
+	if raw := strings.TrimSpace(getenv("OTEL_SERVICE_NAME")); raw != "" {
+		config.OTelServiceName = raw
+	}
+	config.OTLPGRPCEndpoint = strings.TrimSpace(getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+	if raw := strings.TrimSpace(getenv("OTEL_EXPORTER_OTLP_INSECURE")); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return serverConfig{}, fmt.Errorf("OTEL_EXPORTER_OTLP_INSECURE must be true or false")
+		}
+		config.OTLPGRPCInsecure = value
 	}
 	if raw := strings.TrimSpace(getenv("AUTH_COOKIE_SECURE")); raw != "" {
 		value, err := strconv.ParseBool(raw)

@@ -12,6 +12,7 @@ import (
 
 	"bridge-go/user-order-api/internal/app"
 	"bridge-go/user-order-api/internal/platform/database"
+	"bridge-go/user-order-api/internal/platform/telemetry"
 )
 
 func main() {
@@ -19,9 +20,26 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	telemetryCtx, cancelTelemetry := context.WithTimeout(context.Background(), 10*time.Second)
+	runtime, err := telemetry.New(telemetryCtx, telemetry.Config{
+		ServiceName:      config.OTelServiceName,
+		OTLPGRPCEndpoint: config.OTLPGRPCEndpoint,
+		Insecure:         config.OTLPGRPCInsecure,
+	})
+	cancelTelemetry()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), config.ShutdownTimeout)
+		defer cancel()
+		if err := runtime.Shutdown(shutdownCtx); err != nil {
+			log.Printf("telemetry shutdown failed: %v", err)
+		}
+	}()
 
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 10*time.Second)
-	db, err := database.Open(startupCtx, config.MySQLDSN)
+	db, err := database.Open(startupCtx, config.MySQLDSN, runtime.TracerProvider())
 	cancelStartup()
 	if err != nil {
 		log.Fatal(err)
@@ -66,7 +84,7 @@ func main() {
 		}
 	}()
 
-	server := newHTTPServer(config, application)
+	server := newHTTPServer(config, telemetry.HTTPHandler(application, runtime.TracerProvider()))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 

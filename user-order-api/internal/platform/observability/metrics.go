@@ -56,6 +56,7 @@ func New(db DatabaseStats, audit AuditStats) (*Metrics, *prometheus.Registry) {
 			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Namespace: "user_order_api", Name: "mysql_open_connections", Help: "Current open MySQL connections."}, func() float64 { return float64(db.Stats().OpenConnections) }),
 			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Namespace: "user_order_api", Name: "mysql_in_use_connections", Help: "Current in-use MySQL connections."}, func() float64 { return float64(db.Stats().InUse) }),
 			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Namespace: "user_order_api", Name: "mysql_idle_connections", Help: "Current idle MySQL connections."}, func() float64 { return float64(db.Stats().Idle) }),
+			prometheus.NewGaugeFunc(prometheus.GaugeOpts{Namespace: "user_order_api", Name: "mysql_max_open_connections", Help: "Configured maximum open MySQL connections."}, func() float64 { return float64(db.Stats().MaxOpenConnections) }),
 		)
 	}
 
