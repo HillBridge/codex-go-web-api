@@ -14,6 +14,7 @@ import (
 	"bridge-go/user-order-api/internal/order"
 	"bridge-go/user-order-api/internal/platform/audit"
 	"bridge-go/user-order-api/internal/platform/httpx"
+	"bridge-go/user-order-api/internal/platform/observability"
 	"bridge-go/user-order-api/internal/platform/security"
 	"bridge-go/user-order-api/internal/user"
 )
@@ -24,6 +25,8 @@ type Dependencies struct {
 	UserRepository  user.Repository
 	OrderRepository order.Repository
 	AuthService     *auth.Service
+	Readiness       readinessChecker
+	DatabaseStats   observability.DatabaseStats
 	CookieSecure    bool
 	CORSOrigins     []string
 	TrustedProxies  []netip.Prefix
@@ -33,11 +36,15 @@ type Dependencies struct {
 type Application struct {
 	handler     http.Handler
 	auditLogger *audit.AsyncLogger
+	readiness   readinessChecker
+	metrics     *observability.Metrics
 }
 
 func NewWithDependencies(logger *slog.Logger, deps Dependencies) *Application {
 	auditLogger := audit.NewAsyncLogger(logger)
 	deps.AuthService.SetAuditLogger(auditLogger)
+	metrics, _ := observability.New(deps.DatabaseStats, auditLogger)
+	application := &Application{auditLogger: auditLogger, readiness: deps.Readiness, metrics: metrics}
 
 	userHandler := user.NewHandler(user.NewService(deps.UserRepository, auditLogger))
 	orderHandler := order.NewHandler(order.NewService(deps.OrderRepository, deps.UserRepository, auditLogger))
@@ -65,16 +72,17 @@ func NewWithDependencies(logger *slog.Logger, deps Dependencies) *Application {
 
 	mux := http.NewServeMux()
 	mux.Handle(apiV1Prefix+"/", http.StripPrefix(apiV1Prefix, apiMux))
+	mux.HandleFunc("/healthz", application.healthz)
+	mux.HandleFunc("/readyz", application.readyz)
+	mux.Handle("/metrics", application.metrics.Handler())
 	mux.HandleFunc("/", routeNotFound)
 	secured := security.CORSMiddleware(
 		deps.CORSOrigins,
 		security.NewRateLimiterWithTrustedProxies(deps.RateLimits, time.Now, deps.TrustedProxies).Middleware(mux),
 	)
 
-	return &Application{
-		handler:     requestIDMiddleware(requestLogMiddleware(logger, recoveryMiddleware(logger, secured))),
-		auditLogger: auditLogger,
-	}
+	application.handler = metrics.Middleware(requestIDMiddleware(requestLogMiddleware(logger, recoveryMiddleware(logger, secured))))
+	return application
 }
 
 func (a *Application) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -83,6 +91,30 @@ func (a *Application) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (a *Application) Close(ctx context.Context) error {
 	return a.auditLogger.Close(ctx)
+}
+
+func (a *Application) healthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.WriteMethodNotAllowed(w, "GET")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (a *Application) readyz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.WriteMethodNotAllowed(w, "GET")
+		return
+	}
+	if a.readiness != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := a.readiness.PingContext(ctx); err != nil {
+			httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
+			return
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func routeNotFound(w http.ResponseWriter, r *http.Request) {
@@ -158,6 +190,10 @@ func (w *statusRecorder) statusCode() int {
 }
 
 type requestIDContextKey struct{}
+
+type readinessChecker interface {
+	PingContext(context.Context) error
+}
 
 func requestIDFromContext(ctx context.Context) string {
 	requestID, _ := ctx.Value(requestIDContextKey{}).(string)

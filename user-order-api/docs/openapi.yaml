@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: User Order API
   version: 1.0.0
-  description: 使用 MySQL 持久化、短期 JWT 与可撤销刷新会话的用户订单 API。
+  description: 使用 MySQL 持久化、短期 JWT 与可撤销刷新会话的用户订单 API。根路径的 /healthz、/readyz、/metrics 是基础设施运维端点，不属于此 /api/v1 业务接口契约。
 servers:
   - url: http://localhost:8888/api/v1
     description: 本地开发环境

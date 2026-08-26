@@ -12,7 +12,7 @@
 ./scripts/start-local.sh
 ```
 
-脚本会启动本地 MySQL、设置 Compose 对应的默认 `MYSQL_DSN`，再运行 API。若需要连接其他数据库，可在启动前设置自己的 `MYSQL_DSN`。
+脚本只会启动本地 MySQL、设置 Compose 对应的默认 `MYSQL_DSN`，再在宿主机运行 API。若需要连接其他数据库，可在启动前设置自己的 `MYSQL_DSN`。
 
 也可以手动执行：
 
@@ -27,6 +27,47 @@ go run ./cmd/api
 
 ```text
 http://localhost:8888
+```
+
+### Docker Compose（API、MySQL、Prometheus）
+
+需要以容器方式运行整个本地栈时，执行：
+
+```bash
+docker compose up --build -d
+docker compose ps
+```
+
+这会启动 API（`http://localhost:8888`）、MySQL（供 Navicat 使用的 `127.0.0.1:3307`）和 Prometheus（`http://localhost:9090`）。容器内的 API 通过内部地址 `mysql:3306` 访问数据库，外部不应在生产环境映射 MySQL 端口。
+
+常用操作：
+
+```bash
+docker compose logs -f api
+docker compose down
+```
+
+`docker compose down` 仅停止和移除容器，会保留本地 MySQL 与 Prometheus 数据卷。**不要在日常开发执行 `docker compose down -v`**，它会删除这些本地数据卷。
+
+### 健康检查与指标
+
+```bash
+curl http://localhost:8888/healthz
+curl http://localhost:8888/readyz
+curl http://localhost:8888/metrics | rg 'user_order_api_http_requests_total'
+```
+
+- `/healthz`：存活检查，只确认 API 进程可以响应。
+- `/readyz`：就绪检查，额外确认 MySQL 可连接；依赖不可用时返回 `503`，不回显数据库错误。
+- `/metrics`：Prometheus 指标端点，仅用于本地或受保护的监控网络。
+
+Prometheus 每 15 秒从 API 的 `/metrics` 采集一次。打开 `http://localhost:9090` 后可查询：
+
+```promql
+sum(rate(user_order_api_http_requests_total[5m])) by (route, status)
+histogram_quantile(0.95, sum(rate(user_order_api_http_request_duration_seconds_bucket[5m])) by (le, route))
+user_order_api_mysql_in_use_connections
+user_order_api_audit_queue_pending
 ```
 
 运行参数：
@@ -78,6 +119,8 @@ go test ./...
 
 - OpenAPI 3.0 接口契约：[docs/openapi.yaml](docs/openapi.yaml)
 - Postman Collection：[docs/postman/user-order-api.postman_collection.json](docs/postman/user-order-api.postman_collection.json)
+- 实施阶段与完成状态：[docs/implementation-roadmap.md](docs/implementation-roadmap.md)
+- 本地 Docker 与 Prometheus 使用说明：[docs/local-docker-prometheus.md](docs/local-docker-prometheus.md)
 
 在 Postman 点击 **Import**，选择该 Collection 文件即可。先调用 **Auth / Register**：它会自动保存 `accessToken`、`userId`，Postman 也会保存服务设置的 Refresh Cookie。随后可调用 **Orders / Create Order**；它会生成幂等键和 `orderId`。**Refresh** 会轮换 Access Token，**Replay Create Order** 可验证网络重试不会重复创建订单。
 

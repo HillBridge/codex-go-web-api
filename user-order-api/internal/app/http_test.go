@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"bridge-go/user-order-api/internal/order"
 	"bridge-go/user-order-api/internal/platform/database"
+	"bridge-go/user-order-api/internal/platform/security"
 	"bridge-go/user-order-api/internal/platform/testdb"
 	"bridge-go/user-order-api/internal/user"
 )
@@ -152,6 +154,34 @@ func TestRequestIDMiddlewarePreservesCallerRequestID(t *testing.T) {
 
 	if got := rec.Header().Get("X-Request-ID"); got != "client-request-123" {
 		t.Fatalf("X-Request-ID = %q, want %q", got, "client-request-123")
+	}
+}
+
+func TestHealthzIsLiveWithoutDatabase(t *testing.T) {
+	server := newTestServer(t)
+	body := get(t, server, "/healthz", http.StatusOK)
+	if got := string(body); got != "{\"status\":\"ok\"}\n" {
+		t.Fatalf("body = %q, want healthy JSON", got)
+	}
+}
+
+func TestReadyzReturnsServiceUnavailableWhenDependencyFails(t *testing.T) {
+	server := newServerWithReadiness(t, failingReadiness{})
+	body := get(t, server, "/readyz", http.StatusServiceUnavailable)
+	if got := string(body); got != "{\"status\":\"not_ready\"}\n" {
+		t.Fatalf("body = %q, want not-ready JSON", got)
+	}
+}
+
+func TestMetricsEndpointUsesPrometheusContentType(t *testing.T) {
+	server := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Type"), "text/plain") {
+		t.Fatalf("metrics response = %d %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
 }
 
@@ -402,6 +432,7 @@ func TestMySQLAuthenticationAndOrderHTTPFlow(t *testing.T) {
 		defer shutdownCancel()
 		_ = app.Close(shutdownCtx)
 	})
+	get(t, app, "/readyz", http.StatusOK)
 
 	email := "http-flow-" + strconv.FormatInt(time.Now().UnixNano(), 10) + "@example.com"
 	accessToken, userID := registerAccessToken(t, app, email)
@@ -539,6 +570,32 @@ func newTestServer(t *testing.T) *Application {
 		}
 	})
 	return server
+}
+
+func newServerWithReadiness(t *testing.T, readiness readinessChecker) *Application {
+	t.Helper()
+	users := user.NewMemoryRepository()
+	server := NewWithDependencies(slog.New(slog.NewTextHandler(io.Discard, nil)), Dependencies{
+		UserRepository:  users,
+		OrderRepository: order.NewMemoryRepository(),
+		AuthService:     newMemoryAuthService(users),
+		RateLimits:      security.Limits{LoginPerMinute: 5, RefreshPerMinute: 20, APIPerMinute: 120},
+		Readiness:       readiness,
+	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := server.Close(ctx); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	return server
+}
+
+type failingReadiness struct{}
+
+func (failingReadiness) PingContext(context.Context) error {
+	return errors.New("database is unavailable")
 }
 
 func newTestServerWithBootstrapAdmin(t *testing.T) (*Application, string) {

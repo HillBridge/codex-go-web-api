@@ -1,0 +1,9 @@
+.git
+.env
+.DS_Store
+tmp
+coverage
+*.coverprofile
+*.out
+bin
+mysql_data

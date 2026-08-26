@@ -9,6 +9,7 @@
 ```mermaid
 flowchart LR
   C[客户端] --> S[http.Server / Request ID / 日志 / Recovery]
+  P[Prometheus] -->|GET /metrics| S
   S --> SEC[CORS / IP 限流]
   SEC --> AH[Auth Handler / JWT Bearer 中间件]
   AH --> H[User / Order Handler]
@@ -27,6 +28,8 @@ flowchart LR
   US --> A[audit.AsyncLogger]
   OS --> A
   A --> L[stdout / slog]
+  S --> M[Prometheus Metrics: HTTP / MySQL Pool / Audit Queue]
+  M --> DB
 ```
 
 ## 启动与持久化
@@ -57,6 +60,12 @@ MySQL HTTP 集成测试：internal/app/http_test.go → app.NewProduction → My
 - `auth` 负责 bcrypt 密码、短期 HS256 Access JWT、Refresh 会话轮换和退出撤销。每个受保护请求都会按 JWT 的 `sid` 查询会话；会话被退出或轮换撤销后，该 Access Token 的下一次请求立即返回 `401`。`principal` 平台包只承载请求身份上下文，避免认证模块与业务模块相互依赖。
 - 普通用户只能读取自己的资料和订单；订单列表在仓储查询中按 `user_id` 过滤。`admin` 才能列出用户、跨用户查看订单或替其他用户创建订单。
 - `security` 在 HTTP 外层执行精确 Origin CORS 和按 IP/路由类别的内存限流。生产 TLS 由反向代理终止，必须启用 `AUTH_COOKIE_SECURE=true`。
+- `observability` 使用独立 Prometheus Registry 采集 HTTP 请求数、耗时、并发数、MySQL 连接池和审计队列状态。路由标签只使用有限模板，例如 `/api/v1/orders/:id`，不会记录订单 ID、用户 ID、邮箱、Token、请求 ID 或错误文本。
+- `/healthz` 只表示 HTTP 进程可响应；`/readyz` 在两秒内 Ping MySQL 后才表示就绪；`/metrics` 供 Prometheus 抓取。三个端点都在根路径，不属于 `/api/v1` 的业务 API 契约。
+
+## 本地容器运行
+
+`docker compose up --build -d` 启动三个容器：`api` 提供 `8888` 端口，`mysql` 使用命名卷持久化并额外映射 `3307` 供 Navicat 本地查看，`prometheus` 提供 `9090` 端口并每 15 秒抓取 `api:8888/metrics`。容器间通过 Compose 内部网络通信，API 的数据库地址为 `mysql:3306`。
 
 ## 路由
 
@@ -74,6 +83,12 @@ MySQL HTTP 集成测试：internal/app/http_test.go → app.NewProduction → My
 | `/api/v1/orders` | `GET` | 普通用户自己的订单；`admin` 全量 |
 | `/api/v1/orders/:id`、`/pay`、`/cancel` | `GET` / `POST` | 订单所有者或 `admin` |
 
+| 运维路由（根路径） | 方法 | 成功响应 |
+| --- | --- | --- |
+| `/healthz` | `GET` | 存活，`{ "status": "ok" }` |
+| `/readyz` | `GET` | MySQL 就绪时为 `200`；不可用为 `503 { "status": "not_ready" }` |
+| `/metrics` | `GET` | Prometheus 文本格式指标 |
+
 列表接口接受 `limit`（默认 20，范围 1–100）和正整数 `afterId`。没有下一页时省略 `nextCursor`。创建订单可选 `Idempotency-Key` 请求头：同键同参数重试返回首次订单，冲突返回 `IDEMPOTENCY_KEY_CONFLICT`。状态机只允许 `pending -> paid` 或 `pending -> cancelled`，跨终态操作返回 `INVALID_ORDER_STATE`。错误响应为 `{ "code": "稳定错误码", "error": "人类可读文案" }`；金额是人民币分整数，时间是 UTC RFC 3339。
 
 ## 外部依赖
@@ -82,7 +97,9 @@ MySQL HTTP 集成测试：internal/app/http_test.go → app.NewProduction → My
 - `database/sql`
 - `github.com/go-sql-driver/mysql`
 - `github.com/golang-jwt/jwt/v5`
+- `github.com/prometheus/client_golang`
 - `golang.org/x/crypto/bcrypt`
 - MySQL `8.4`（本地由 `compose.yaml` 提供）
+- Prometheus `3.5.0`（本地由 `compose.yaml` 提供）
 
 创建订单的持久化时序见：[订单创建时序图](images/order-create-sequence.svg)。

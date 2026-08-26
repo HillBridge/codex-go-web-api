@@ -77,6 +77,10 @@ func (l *AsyncLogger) Dropped() uint64 {
 	return l.dropped.Load()
 }
 
+func (l *AsyncLogger) Pending() int {
+	return len(l.events)
+}
+
 func (l *AsyncLogger) run() {
 	defer close(l.done)
 	for item := range l.events {

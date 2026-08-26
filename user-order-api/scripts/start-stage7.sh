@@ -5,7 +5,7 @@ set -euo pipefail
 project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$project_root"
 
-docker compose up -d
+docker compose up -d mysql
 ./scripts/setup-test-database.sh
 
 export MYSQL_DSN="${MYSQL_DSN:-app:app_password@tcp(127.0.0.1:3307)/user_order_api_test?parseTime=true&charset=utf8mb4&loc=UTC}"

@@ -56,6 +56,21 @@ func TestAsyncLoggerDropsWhenQueueIsFullWithoutBlocking(t *testing.T) {
 	closeAuditLogger(t, logger)
 }
 
+func TestAsyncLoggerReportsPendingEvents(t *testing.T) {
+	worker := newBlockingHandler()
+	logger := newAsyncLogger(slog.New(worker), 1)
+	logger.Record(context.Background(), "first", nil)
+	<-worker.started
+	logger.Record(context.Background(), "second", nil)
+
+	if got := logger.Pending(); got != 1 {
+		t.Fatalf("Pending() = %d, want 1", got)
+	}
+
+	close(worker.release)
+	closeAuditLogger(t, logger)
+}
+
 func TestAsyncLoggerCloseDrainsQueuedEvents(t *testing.T) {
 	var output bytes.Buffer
 	logger := NewAsyncLogger(slog.New(slog.NewTextHandler(&output, nil)))
