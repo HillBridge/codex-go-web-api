@@ -88,6 +88,9 @@ func TestLoadConfigUsesAuthSecurityDefaults(t *testing.T) {
 	if config.LoginRateLimitPerMinute != 5 || config.RefreshRateLimitPerMinute != 20 || config.APIRateLimitPerMinute != 120 {
 		t.Fatalf("rate limit defaults = %+v", config)
 	}
+	if config.RedisEnvironment != "local" || config.RedisAddr != "" {
+		t.Fatalf("redis defaults = addr=%q environment=%q", config.RedisAddr, config.RedisEnvironment)
+	}
 }
 
 func TestLoadConfigParsesOpenTelemetrySettings(t *testing.T) {
@@ -123,6 +126,8 @@ func TestLoadConfigParsesAuthSecuritySettings(t *testing.T) {
 		"RATE_LIMIT_API_PER_MINUTE":     "121",
 		"BOOTSTRAP_ADMIN_EMAIL":         "admin@example.com",
 		"BOOTSTRAP_ADMIN_PASSWORD":      "correct-password",
+		"REDIS_ADDR":                    " redis:6379 ",
+		"REDIS_ENVIRONMENT":             "staging",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -138,6 +143,16 @@ func TestLoadConfigParsesAuthSecuritySettings(t *testing.T) {
 	}
 	if config.BootstrapAdminEmail != "admin@example.com" || config.BootstrapAdminPassword != "correct-password" {
 		t.Fatalf("bootstrap config = %+v", config)
+	}
+	if config.RedisAddr != "redis:6379" || config.RedisEnvironment != "staging" {
+		t.Fatalf("redis config = addr=%q environment=%q", config.RedisAddr, config.RedisEnvironment)
+	}
+}
+
+func TestLoadConfigRejectsRedisEnvironmentWhitespace(t *testing.T) {
+	_, err := loadConfig(testEnvironment(map[string]string{"REDIS_ENVIRONMENT": "staging env"}))
+	if err == nil || err.Error() != "REDIS_ENVIRONMENT must not contain whitespace" {
+		t.Fatalf("loadConfig() error = %v", err)
 	}
 }
 

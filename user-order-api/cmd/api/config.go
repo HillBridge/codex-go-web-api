@@ -28,6 +28,8 @@ type serverConfig struct {
 	LoginRateLimitPerMinute   int
 	RefreshRateLimitPerMinute int
 	APIRateLimitPerMinute     int
+	RedisAddr                 string
+	RedisEnvironment          string
 	BootstrapAdminEmail       string
 	BootstrapAdminPassword    string
 	Addr                      string
@@ -49,6 +51,7 @@ func defaultServerConfig() serverConfig {
 		LoginRateLimitPerMinute:   5,
 		RefreshRateLimitPerMinute: 20,
 		APIRateLimitPerMinute:     120,
+		RedisEnvironment:          "local",
 		ReadHeaderTimeout:         5 * time.Second,
 		ReadTimeout:               15 * time.Second,
 		WriteTimeout:              15 * time.Second,
@@ -115,6 +118,13 @@ func loadConfig(getenv func(string) string) (serverConfig, error) {
 		config.OTelServiceName = raw
 	}
 	config.OTLPGRPCEndpoint = strings.TrimSpace(getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+	config.RedisAddr = strings.TrimSpace(getenv("REDIS_ADDR"))
+	if raw := strings.TrimSpace(getenv("REDIS_ENVIRONMENT")); raw != "" {
+		if strings.IndexAny(raw, " \t\r\n") >= 0 {
+			return serverConfig{}, fmt.Errorf("REDIS_ENVIRONMENT must not contain whitespace")
+		}
+		config.RedisEnvironment = raw
+	}
 	if raw := strings.TrimSpace(getenv("OTEL_EXPORTER_OTLP_INSECURE")); raw != "" {
 		value, err := strconv.ParseBool(raw)
 		if err != nil {

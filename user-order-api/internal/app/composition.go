@@ -22,6 +22,8 @@ type Config struct {
 	CORSAllowedOrigins                                                        []string
 	TrustedProxyCIDRs                                                         []netip.Prefix
 	LoginRateLimitPerMinute, RefreshRateLimitPerMinute, APIRateLimitPerMinute int
+	RateLimitStore                                                            security.CounterStore
+	RateLimitEnvironment                                                      string
 	BootstrapAdminEmail, BootstrapAdminPassword                               string
 }
 
@@ -48,7 +50,7 @@ func newAuthService(identities auth.IdentityRepository, sessions auth.Repository
 }
 
 func buildApplication(logger *slog.Logger, users user.Repository, orders order.Repository, service *auth.Service, config Config, readiness readinessChecker, databaseStats observability.DatabaseStats) *Application {
-	return NewWithDependencies(logger, Dependencies{UserRepository: users, OrderRepository: orders, AuthService: service, Readiness: readiness, DatabaseStats: databaseStats, CookieSecure: config.AuthCookieSecure, CORSOrigins: config.CORSAllowedOrigins, TrustedProxies: config.TrustedProxyCIDRs, RateLimits: security.Limits{LoginPerMinute: config.LoginRateLimitPerMinute, RefreshPerMinute: config.RefreshRateLimitPerMinute, APIPerMinute: config.APIRateLimitPerMinute}})
+	return NewWithDependencies(logger, Dependencies{UserRepository: users, OrderRepository: orders, AuthService: service, Readiness: readiness, DatabaseStats: databaseStats, CookieSecure: config.AuthCookieSecure, CORSOrigins: config.CORSAllowedOrigins, TrustedProxies: config.TrustedProxyCIDRs, RateLimits: security.Limits{LoginPerMinute: config.LoginRateLimitPerMinute, RefreshPerMinute: config.RefreshRateLimitPerMinute, APIPerMinute: config.APIRateLimitPerMinute}, RateLimitStore: config.RateLimitStore, RateLimitEnvironment: config.RateLimitEnvironment})
 }
 
 func bootstrapAdmin(ctx context.Context, logger *slog.Logger, service *auth.Service, config Config) error {

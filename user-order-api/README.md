@@ -2,7 +2,7 @@
 
 这是一个给前端同学练 Go 后端基础的小项目。
 
-项目保留标准库 HTTP 分层，并使用 MySQL 持久化用户和订单数据；不引入 Gin、GORM、Redis 或 ORM，以便把 Go 后端的分层、接口、错误处理、上下文、并发、SQL 和迁移基础练扎实。
+项目保留标准库 HTTP 分层，并使用 MySQL 持久化用户和订单数据；不引入 Gin、GORM 或 ORM。Redis 仅作为可选的跨实例限流计数器，以便保持核心业务边界清晰。
 
 ## 运行
 
@@ -29,7 +29,7 @@ go run ./cmd/api
 http://localhost:8888
 ```
 
-### Docker Compose（API、MySQL、Prometheus）
+### Docker Compose（API、MySQL、Redis、Prometheus）
 
 需要以容器方式运行整个本地栈时，执行：
 
@@ -38,7 +38,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-这会启动 API（`http://localhost:8888`）、MySQL（供 Navicat 使用的 `127.0.0.1:3307`）、Prometheus（`http://localhost:9090`）、Jaeger（`http://localhost:16686`）和 Alertmanager（`http://localhost:9093`）。容器内的 API 通过内部地址 `mysql:3306` 访问数据库，外部不应在生产环境映射 MySQL 端口。
+这会启动 API（`http://localhost:8888`）、MySQL（供 Navicat 使用的 `127.0.0.1:3307`）、Redis（仅 Compose 内部 `redis:6379`）、Prometheus（`http://localhost:9090`）、Jaeger（`http://localhost:16686`）和 Alertmanager（`http://localhost:9093`）。容器内的 API 通过 `mysql:3306` 和 `redis:6379` 访问依赖，外部不应在生产环境映射 MySQL 或 Redis 端口。
 
 常用操作：
 
@@ -85,6 +85,8 @@ user_order_api_audit_queue_pending
 | `RATE_LIMIT_LOGIN_PER_MINUTE` | `5` | 单 IP 登录/注册每分钟上限。 |
 | `RATE_LIMIT_REFRESH_PER_MINUTE` | `20` | 单 IP 刷新会话每分钟上限。 |
 | `RATE_LIMIT_API_PER_MINUTE` | `120` | 单 IP 普通 API 每分钟上限。 |
+| `REDIS_ADDR` | 空（Compose 为 `redis:6379`） | 配置后使用 Redis 共享限流；为空时使用进程内存限流。启动时连接失败会终止 API。 |
+| `REDIS_ENVIRONMENT` | `local` | Redis 限流 Key 的环境隔离名，不得包含空白字符。 |
 | `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | 均为空 | 两者同时设置时，仅在该邮箱不存在时创建首个管理员。 |
 | `PORT` | `8888` | HTTP 监听端口，范围为 1–65535。 |
 | `READ_HEADER_TIMEOUT` | `5s` | 读取请求头超时。 |
@@ -125,6 +127,7 @@ go test ./...
 - 实施阶段与完成状态：[docs/implementation-roadmap.md](docs/implementation-roadmap.md)
 - 本地 Docker 与 Prometheus 使用说明：[docs/local-docker-prometheus.md](docs/local-docker-prometheus.md)
 - 阶段 6 认证、授权与基础安全说明：[docs/phase-6-authentication-authorization-security.md](docs/phase-6-authentication-authorization-security.md)
+- 阶段 8 API 性能基线：[docs/stage8-performance-baseline.md](docs/stage8-performance-baseline.md)
 
 在 Postman 点击 **Import**，选择该 Collection 文件即可。先调用 **Auth / Register**：它会自动保存 `accessToken`、`userId`，Postman 也会保存服务设置的 Refresh Cookie。随后可调用 **Orders / Create Order**；它会生成幂等键和 `orderId`。**Refresh** 会轮换 Access Token，**Replay Create Order** 可验证网络重试不会重复创建订单。
 
@@ -270,7 +273,7 @@ internal/platform
   httpx            JSON、错误响应、路径参数工具
   page             游标分页请求与响应契约
   principal        与业务解耦的请求身份上下文
-  security         精确 Origin CORS 与按 IP 的内存限流
+  security         精确 Origin CORS 与可选 Redis 共享限流
 ```
 
 ## 这版练到哪些 Go 基础

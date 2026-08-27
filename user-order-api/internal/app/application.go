@@ -23,15 +23,17 @@ import (
 const apiV1Prefix = "/api/v1"
 
 type Dependencies struct {
-	UserRepository  user.Repository
-	OrderRepository order.Repository
-	AuthService     *auth.Service
-	Readiness       readinessChecker
-	DatabaseStats   observability.DatabaseStats
-	CookieSecure    bool
-	CORSOrigins     []string
-	TrustedProxies  []netip.Prefix
-	RateLimits      security.Limits
+	UserRepository       user.Repository
+	OrderRepository      order.Repository
+	AuthService          *auth.Service
+	Readiness            readinessChecker
+	DatabaseStats        observability.DatabaseStats
+	CookieSecure         bool
+	CORSOrigins          []string
+	TrustedProxies       []netip.Prefix
+	RateLimits           security.Limits
+	RateLimitStore       security.CounterStore
+	RateLimitEnvironment string
 }
 
 type Application struct {
@@ -79,7 +81,7 @@ func NewWithDependencies(logger *slog.Logger, deps Dependencies) *Application {
 	mux.HandleFunc("/", routeNotFound)
 	secured := security.CORSMiddleware(
 		deps.CORSOrigins,
-		security.NewRateLimiterWithTrustedProxies(deps.RateLimits, time.Now, deps.TrustedProxies).Middleware(mux),
+		security.NewRateLimiterWithStore(deps.RateLimits, time.Now, deps.TrustedProxies, deps.RateLimitStore, deps.RateLimitEnvironment).Middleware(mux),
 	)
 
 	application.handler = metrics.Middleware(requestIDMiddleware(requestLogMiddleware(logger, recoveryMiddleware(logger, secured))))

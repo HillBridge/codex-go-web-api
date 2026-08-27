@@ -12,6 +12,7 @@ flowchart LR
   P[Prometheus] -->|GET /metrics| S
   S --> SEC[CORS / IP 限流]
   SEC --> AH[Auth Handler / JWT Bearer 中间件]
+  SEC -.-> RL[(Redis 共享限流计数)]
   AH --> H[User / Order Handler]
   H -->|2 秒请求 Context| US[User Service]
   H -->|2 秒请求 Context| OS[Order Service]
@@ -37,8 +38,9 @@ flowchart LR
 1. `main` 读取服务器超时和 `MYSQL_DSN`；DSN 缺失或数据库不可用时启动失败，不会回退到内存数据。
 2. `database.Open` 建立 `database/sql` 连接池：最大连接 10、最大空闲 5、连接生命周期 30 分钟，并在 5 秒内完成 Ping。
 3. `database.ApplyMigrations` 从二进制内嵌的 SQL 文件按文件名顺序执行尚未记录的迁移；DDL 成功后才写入 `schema_migrations`。迁移仅向前，遇错立即停止。
-4. `main` 调用 `app.NewProduction`；该函数创建 `user.NewMySQLRepository`、`order.NewMySQLRepository` 和 `auth.NewMySQLRepository`，再组装相同的 HTTP 应用。认证数据与业务数据使用同一个 MySQL 数据库；会话只存 Refresh Token 的 SHA-256 哈希。
-5. 若同时配置 `BOOTSTRAP_ADMIN_EMAIL`、`BOOTSTRAP_ADMIN_PASSWORD`，`app.NewProduction` 启动时仅在邮箱不存在时创建管理员。优雅停机的实际关闭顺序为 HTTP → 审计日志 → 数据库连接池。
+4. 若设置 `REDIS_ADDR`，`main` 在监听端口前 Ping Redis 并将计数器注入应用；Redis 不可用时启动失败。未设置时限流使用进程内存实现。
+5. `main` 调用 `app.NewProduction`；该函数创建 `user.NewMySQLRepository`、`order.NewMySQLRepository` 和 `auth.NewMySQLRepository`，再组装相同的 HTTP 应用。认证数据与业务数据使用同一个 MySQL 数据库；会话只存 Refresh Token 的 SHA-256 哈希。
+6. 若同时配置 `BOOTSTRAP_ADMIN_EMAIL`、`BOOTSTRAP_ADMIN_PASSWORD`，`app.NewProduction` 启动时仅在邮箱不存在时创建管理员。优雅停机的实际关闭顺序为 HTTP → 审计日志 → Redis → 数据库连接池。
 
 ## 三条组装路径
 
@@ -59,13 +61,13 @@ MySQL HTTP 集成测试：internal/app/http_test.go → app.NewProduction → My
 - `page.Request` 与 `page.Result[T]` 是存储无关的游标分页契约。查询按 `id ASC`，使用 `afterId` 和多取一条记录生成 `nextCursor`。
 - `auth` 负责 bcrypt 密码、短期 HS256 Access JWT、Refresh 会话轮换和退出撤销。每个受保护请求都会按 JWT 的 `sid` 查询会话；会话被退出或轮换撤销后，该 Access Token 的下一次请求立即返回 `401`。`principal` 平台包只承载请求身份上下文，避免认证模块与业务模块相互依赖。
 - 普通用户只能读取自己的资料和订单；订单列表在仓储查询中按 `user_id` 过滤。`admin` 才能列出用户、跨用户查看订单或替其他用户创建订单。
-- `security` 在 HTTP 外层执行精确 Origin CORS 和按 IP/路由类别的内存限流。生产 TLS 由反向代理终止，必须启用 `AUTH_COOKIE_SECURE=true`。
+- `security` 在 HTTP 外层执行精确 Origin CORS 和按 IP/路由类别的限流；配置 Redis 时通过 Lua 原子计数在多个实例间共享窗口，未配置时使用内存计数。生产 TLS 由反向代理终止，必须启用 `AUTH_COOKIE_SECURE=true`。
 - `observability` 使用独立 Prometheus Registry 采集 HTTP 请求数、耗时、并发数、MySQL 连接池和审计队列状态。路由标签只使用有限模板，例如 `/api/v1/orders/:id`，不会记录订单 ID、用户 ID、邮箱、Token、请求 ID 或错误文本。
 - `/healthz` 只表示 HTTP 进程可响应；`/readyz` 在两秒内 Ping MySQL 后才表示就绪；`/metrics` 供 Prometheus 抓取。三个端点都在根路径，不属于 `/api/v1` 的业务 API 契约。
 
 ## 本地容器运行
 
-`docker compose up --build -d` 启动三个容器：`api` 提供 `8888` 端口，`mysql` 使用命名卷持久化并额外映射 `3307` 供 Navicat 本地查看，`prometheus` 提供 `9090` 端口并每 15 秒抓取 `api:8888/metrics`。容器间通过 Compose 内部网络通信，API 的数据库地址为 `mysql:3306`。
+`docker compose up --build -d` 启动 API、MySQL、Redis、Prometheus、Jaeger 和 Alertmanager：`api` 提供 `8888` 端口，`mysql` 使用命名卷持久化并额外映射 `3307` 供 Navicat 本地查看，Redis 仅在 Compose 内部提供 `redis:6379`，Prometheus 提供 `9090` 端口并每 15 秒抓取 `api:8888/metrics`。容器间通过 Compose 内部网络通信，API 的数据库地址为 `mysql:3306`。
 
 ## 路由
 
@@ -98,8 +100,10 @@ MySQL HTTP 集成测试：internal/app/http_test.go → app.NewProduction → My
 - `github.com/go-sql-driver/mysql`
 - `github.com/golang-jwt/jwt/v5`
 - `github.com/prometheus/client_golang`
+- `github.com/redis/go-redis/v9`
 - `golang.org/x/crypto/bcrypt`
 - MySQL `8.4`（本地由 `compose.yaml` 提供）
 - Prometheus `3.5.0`（本地由 `compose.yaml` 提供）
+- Redis `7.4`（本地由 `compose.yaml` 提供，仅用于共享限流计数）
 
 创建订单的持久化时序见：[订单创建时序图](images/order-create-sequence.svg)。

@@ -17,6 +17,17 @@ services:
       timeout: 3s
       retries: 20
 
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   jaeger:
     image: jaegertracing/all-in-one:1.71.0
     environment:
@@ -32,11 +43,17 @@ services:
       MYSQL_DSN: app:app_password@tcp(mysql:3306)/user_order_api?parseTime=true&charset=utf8mb4&loc=UTC
       JWT_SIGNING_KEY: local-development-key-must-be-at-least-32-bytes
       AUTH_COOKIE_SECURE: "false"
+      TRUSTED_PROXY_CIDRS: "${TRUSTED_PROXY_CIDRS:-}"
+      REDIS_ADDR: "${REDIS_ADDR:-redis:6379}"
+      REDIS_ENVIRONMENT: "${REDIS_ENVIRONMENT:-local}"
+      RATE_LIMIT_API_PER_MINUTE: "${RATE_LIMIT_API_PER_MINUTE:-120}"
       OTEL_SERVICE_NAME: user-order-api
       OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4317
       OTEL_EXPORTER_OTLP_INSECURE: "true"
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       jaeger:
         condition: service_started
@@ -77,3 +94,4 @@ volumes:
   prometheus_data:
   jaeger_data:
   alertmanager_data:
+  redis_data:

@@ -12,6 +12,7 @@ import (
 
 	"bridge-go/user-order-api/internal/app"
 	"bridge-go/user-order-api/internal/platform/database"
+	"bridge-go/user-order-api/internal/platform/security"
 	"bridge-go/user-order-api/internal/platform/telemetry"
 )
 
@@ -57,6 +58,23 @@ func main() {
 		log.Fatal(err)
 	}
 
+	var rateLimitStore security.CounterStore
+	var redisStore *security.RedisCounterStore
+	if config.RedisAddr != "" {
+		startupCtx, cancelStartup = context.WithTimeout(context.Background(), 10*time.Second)
+		redisStore, err = security.NewRedisCounterStore(startupCtx, config.RedisAddr, config.RedisEnvironment)
+		cancelStartup()
+		if err != nil {
+			log.Fatal(err)
+		}
+		rateLimitStore = redisStore
+		defer func() {
+			if err := redisStore.Close(); err != nil {
+				log.Printf("Redis shutdown failed: %v", err)
+			}
+		}()
+	}
+
 	listener, err := net.Listen("tcp", config.Addr)
 	if err != nil {
 		log.Fatal(err)
@@ -70,6 +88,7 @@ func main() {
 		AuthCookieSecure: config.AuthCookieSecure, CORSAllowedOrigins: config.CORSAllowedOrigins,
 		TrustedProxyCIDRs:       config.TrustedProxyCIDRs,
 		LoginRateLimitPerMinute: config.LoginRateLimitPerMinute, RefreshRateLimitPerMinute: config.RefreshRateLimitPerMinute, APIRateLimitPerMinute: config.APIRateLimitPerMinute,
+		RateLimitStore: rateLimitStore, RateLimitEnvironment: config.RedisEnvironment,
 		BootstrapAdminEmail: config.BootstrapAdminEmail, BootstrapAdminPassword: config.BootstrapAdminPassword,
 	})
 	cancelStartup()

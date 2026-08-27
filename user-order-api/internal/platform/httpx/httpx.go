@@ -73,6 +73,10 @@ func TooManyRequestsCode(code, message string) *AppError {
 	return &AppError{Status: http.StatusTooManyRequests, Code: code, Message: message}
 }
 
+func ServiceUnavailableCode(code, message string) *AppError {
+	return &AppError{Status: http.StatusServiceUnavailable, Code: code, Message: message}
+}
+
 func Internal(message string, err error) *AppError {
 	return &AppError{Status: http.StatusInternalServerError, Code: CodeInternalError, Message: message, Err: err}
 }
