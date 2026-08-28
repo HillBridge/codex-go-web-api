@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"bridge-go/user-order-api/internal/platform/audit"
 	"bridge-go/user-order-api/internal/platform/httpx"
+	"bridge-go/user-order-api/internal/platform/outbox"
 	"bridge-go/user-order-api/internal/platform/page"
 )
 
@@ -28,7 +30,20 @@ func (s *Service) Create(ctx context.Context, input CreateUserRequest) (User, er
 		return User{}, httpx.BadRequest("valid email is required")
 	}
 
-	user, err := s.repo.Create(ctx, input)
+	var (
+		user           User
+		err            error
+		eventPersisted bool
+	)
+	if repo, ok := s.repo.(interface {
+		CreateWithEvent(context.Context, CreateUserRequest, func(User) (outbox.Event, error)) (User, bool, error)
+	}); ok {
+		user, eventPersisted, err = repo.CreateWithEvent(ctx, input, func(item User) (outbox.Event, error) {
+			return outbox.NewEvent("user.created", "user", item.ID, map[string]any{"userID": item.ID}, time.Now().UTC())
+		})
+	} else {
+		user, err = s.repo.Create(ctx, input)
+	}
 	if err != nil {
 		if errors.Is(err, ErrEmailTaken) {
 			return User{}, httpx.BadRequestCode("EMAIL_ALREADY_EXISTS", "email already exists")
@@ -36,7 +51,9 @@ func (s *Service) Create(ctx context.Context, input CreateUserRequest) (User, er
 		return User{}, httpx.Internal("failed to create user", fmt.Errorf("create user: %w", err))
 	}
 
-	s.audit.Record(ctx, "user.created", map[string]any{"userID": user.ID})
+	if !eventPersisted {
+		s.audit.Record(ctx, "user.created", map[string]any{"userID": user.ID})
+	}
 	return user, nil
 }
 

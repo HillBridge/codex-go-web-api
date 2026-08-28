@@ -1,0 +1,21 @@
+CREATE TABLE outbox_events (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    event_id CHAR(36) NOT NULL UNIQUE,
+    event_type VARCHAR(100) NOT NULL,
+    aggregate_type VARCHAR(50) NOT NULL,
+    aggregate_id BIGINT NOT NULL,
+    payload JSON NOT NULL,
+    occurred_at DATETIME(6) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    attempts INT UNSIGNED NOT NULL DEFAULT 0,
+    available_at DATETIME(6) NOT NULL,
+    locked_until DATETIME(6) NULL,
+    lock_token CHAR(64) NULL,
+    published_at DATETIME(6) NULL,
+    last_error VARCHAR(1000) NULL,
+    created_at DATETIME(6) NOT NULL,
+    updated_at DATETIME(6) NOT NULL,
+    CONSTRAINT chk_outbox_status CHECK (status IN ('pending', 'publishing', 'published', 'dead')),
+    INDEX idx_outbox_publishable (status, available_at, id),
+    INDEX idx_outbox_locked (status, locked_until, id)
+);

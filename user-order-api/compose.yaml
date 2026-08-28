@@ -28,6 +28,22 @@ services:
       timeout: 3s
       retries: 20
 
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: app
+      RABBITMQ_DEFAULT_PASS: app_password
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   jaeger:
     image: jaegertracing/all-in-one:1.71.0
     environment:
@@ -47,6 +63,14 @@ services:
       REDIS_ADDR: "${REDIS_ADDR:-redis:6379}"
       REDIS_ENVIRONMENT: "${REDIS_ENVIRONMENT:-local}"
       RATE_LIMIT_API_PER_MINUTE: "${RATE_LIMIT_API_PER_MINUTE:-120}"
+      RABBITMQ_URL: "${RABBITMQ_URL:-amqp://app:app_password@rabbitmq:5672/}"
+      RABBITMQ_EXCHANGE: "${RABBITMQ_EXCHANGE:-user-order-api.events}"
+      RABBITMQ_AUDIT_QUEUE: "${RABBITMQ_AUDIT_QUEUE:-user-order-api.audit.v1}"
+      OUTBOX_POLL_INTERVAL: "${OUTBOX_POLL_INTERVAL:-1s}"
+      OUTBOX_BATCH_SIZE: "${OUTBOX_BATCH_SIZE:-100}"
+      OUTBOX_MAX_ATTEMPTS: "${OUTBOX_MAX_ATTEMPTS:-10}"
+      CONSUMER_PREFETCH: "${CONSUMER_PREFETCH:-20}"
+      CONSUMER_MAX_RETRIES: "${CONSUMER_MAX_RETRIES:-5}"
       OTEL_SERVICE_NAME: user-order-api
       OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4317
       OTEL_EXPORTER_OTLP_INSECURE: "true"
@@ -54,6 +78,8 @@ services:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
       jaeger:
         condition: service_started
@@ -95,3 +121,4 @@ volumes:
   jaeger_data:
   alertmanager_data:
   redis_data:
+  rabbitmq_data:

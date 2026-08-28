@@ -16,6 +16,7 @@ import (
 
 	"bridge-go/user-order-api/internal/platform/audit"
 	"bridge-go/user-order-api/internal/platform/httpx"
+	"bridge-go/user-order-api/internal/platform/outbox"
 )
 
 type RegisterRequest struct {
@@ -65,7 +66,29 @@ func (s *Service) Register(ctx context.Context, input RegisterRequest) (Result, 
 	if err != nil {
 		return Result{}, httpx.Internal("failed to hash password", err)
 	}
-	identity, err := s.identities.CreateIdentity(ctx, NewIdentity{Name: input.Name, Email: input.Email, PasswordHash: string(hash), Role: RoleUser})
+	identityInput := NewIdentity{Name: input.Name, Email: input.Email, PasswordHash: string(hash), Role: RoleUser}
+	refresh, err := newRefreshToken()
+	if err != nil {
+		return Result{}, httpx.Internal("failed to create refresh token", err)
+	}
+	newSession := NewSession{ID: newSessionID(), TokenHash: tokenHash(refresh), ExpiresAt: s.now().Add(s.refreshTTL)}
+	if repo, ok := s.identities.(*MySQLRepository); ok && repo.events != nil {
+		identity, session, eventPersisted, err := repo.RegisterWithEvent(ctx, identityInput, newSession, func(identity Identity, session Session) (outbox.Event, error) {
+			return outbox.NewEvent("auth.registered", "user", identity.ID, map[string]any{"userID": identity.ID, "sessionID": session.ID}, s.now())
+		})
+		if err != nil {
+			if errors.Is(err, ErrEmailTaken) {
+				return Result{}, httpx.ConflictCode("EMAIL_ALREADY_EXISTS", "email already exists")
+			}
+			return Result{}, httpx.Internal("failed to create user", fmt.Errorf("create identity: %w", err))
+		}
+		result, err := s.resultFromSession(identity, session, refresh)
+		if err == nil && !eventPersisted && s.audit != nil {
+			s.audit.Record(ctx, "auth.registered", map[string]any{"userID": identity.ID})
+		}
+		return result, err
+	}
+	identity, err := s.identities.CreateIdentity(ctx, identityInput)
 	if err != nil {
 		if errors.Is(err, ErrEmailTaken) {
 			return Result{}, httpx.ConflictCode("EMAIL_ALREADY_EXISTS", "email already exists")
@@ -88,6 +111,24 @@ func (s *Service) Login(ctx context.Context, input LoginRequest) (Result, error)
 	if bcrypt.CompareHashAndPassword([]byte(identity.PasswordHash), []byte(input.Password)) != nil {
 		return Result{}, invalidCredentials()
 	}
+	refresh, err := newRefreshToken()
+	if err != nil {
+		return Result{}, httpx.Internal("failed to create refresh token", err)
+	}
+	newSession := NewSession{ID: newSessionID(), UserID: identity.ID, TokenHash: tokenHash(refresh), ExpiresAt: s.now().Add(s.refreshTTL)}
+	if repo, ok := s.sessions.(*MySQLRepository); ok && repo.events != nil {
+		session, eventPersisted, err := repo.CreateSessionWithEvent(ctx, newSession, func(session Session) (outbox.Event, error) {
+			return outbox.NewEvent("auth.logged_in", "user", identity.ID, map[string]any{"userID": identity.ID, "sessionID": session.ID}, s.now())
+		})
+		if err != nil {
+			return Result{}, httpx.Internal("failed to create session", err)
+		}
+		result, err := s.resultFromSession(identity, session, refresh)
+		if err == nil && !eventPersisted && s.audit != nil {
+			s.audit.Record(ctx, "auth.logged_in", map[string]any{"userID": identity.ID, "sessionID": session.ID})
+		}
+		return result, err
+	}
 	result, err := s.newSessionResult(ctx, identity)
 	if err == nil && s.audit != nil {
 		s.audit.Record(ctx, "auth.logged_in", map[string]any{"userID": identity.ID})
@@ -108,7 +149,16 @@ func (s *Service) Refresh(ctx context.Context, rawToken string) (Result, error) 
 	if err != nil {
 		return Result{}, httpx.Internal("failed to create refresh token", err)
 	}
-	newSession, err := s.sessions.Rotate(ctx, session.ID, NewSession{ID: newSessionID(), UserID: identity.ID, TokenHash: tokenHash(refresh), ExpiresAt: s.now().Add(s.refreshTTL)})
+	replacement := NewSession{ID: newSessionID(), UserID: identity.ID, TokenHash: tokenHash(refresh), ExpiresAt: s.now().Add(s.refreshTTL)}
+	var newSession Session
+	eventPersisted := false
+	if repo, ok := s.sessions.(*MySQLRepository); ok && repo.events != nil {
+		newSession, eventPersisted, err = repo.RotateWithEvent(ctx, session.ID, replacement, func(session Session) (outbox.Event, error) {
+			return outbox.NewEvent("auth.refreshed", "user", identity.ID, map[string]any{"userID": identity.ID, "sessionID": session.ID}, s.now())
+		})
+	} else {
+		newSession, err = s.sessions.Rotate(ctx, session.ID, replacement)
+	}
 	if err != nil {
 		return Result{}, unauthenticated()
 	}
@@ -117,7 +167,7 @@ func (s *Service) Refresh(ctx context.Context, rawToken string) (Result, error) 
 		return Result{}, httpx.Internal("failed to issue access token", err)
 	}
 	result := Result{Identity: identity, AccessToken: access, RefreshToken: refresh}
-	if s.audit != nil {
+	if !eventPersisted && s.audit != nil {
 		s.audit.Record(ctx, "auth.refreshed", map[string]any{"userID": identity.ID, "sessionID": newSession.ID})
 	}
 	return result, nil
@@ -128,10 +178,15 @@ func (s *Service) Logout(ctx context.Context, rawToken string) error {
 	if err != nil {
 		return unauthenticated()
 	}
-	if err := s.sessions.Revoke(ctx, session.ID, s.now()); err != nil {
+	if repo, ok := s.sessions.(*MySQLRepository); ok && repo.events != nil {
+		if _, err := repo.RevokeWithEvent(ctx, session.ID, s.now(), func(session Session) (outbox.Event, error) {
+			return outbox.NewEvent("auth.logged_out", "user", session.UserID, map[string]any{"userID": session.UserID, "sessionID": session.ID}, s.now())
+		}); err != nil {
+			return unauthenticated()
+		}
+	} else if err := s.sessions.Revoke(ctx, session.ID, s.now()); err != nil {
 		return unauthenticated()
-	}
-	if s.audit != nil {
+	} else if s.audit != nil {
 		s.audit.Record(ctx, "auth.logged_out", map[string]any{"userID": session.UserID, "sessionID": session.ID})
 	}
 	return nil
@@ -179,6 +234,14 @@ func (s *Service) newSessionResult(ctx context.Context, identity Identity) (Resu
 	if err != nil {
 		return Result{}, httpx.Internal("failed to create session", err)
 	}
+	access, err := s.tokens.Issue(Principal{UserID: identity.ID, Role: string(identity.Role), SessionID: session.ID, AuthVersion: identity.AuthVersion})
+	if err != nil {
+		return Result{}, httpx.Internal("failed to issue access token", err)
+	}
+	return Result{Identity: identity, AccessToken: access, RefreshToken: refresh}, nil
+}
+
+func (s *Service) resultFromSession(identity Identity, session Session, refresh string) (Result, error) {
 	access, err := s.tokens.Issue(Principal{UserID: identity.ID, Role: string(identity.Role), SessionID: session.ID, AuthVersion: identity.AuthVersion})
 	if err != nil {
 		return Result{}, httpx.Internal("failed to issue access token", err)

@@ -55,6 +55,32 @@ func TestComposeIncludesRedis(t *testing.T) {
 	}
 }
 
+func TestComposeIncludesRabbitMQ(t *testing.T) {
+	compose := readProjectFile(t, "../compose.yaml")
+	for _, expected := range []string{"rabbitmq:", "rabbitmq:4-management-alpine", "5672:5672", "15672:15672", "rabbitmq-diagnostics", "rabbitmq_data", "RABBITMQ_URL:", "condition: service_healthy"} {
+		if !strings.Contains(compose, expected) {
+			t.Fatalf("compose.yaml does not contain %q", expected)
+		}
+	}
+	if strings.Contains(compose, "down -v") {
+		t.Fatal("compose.yaml must not include destructive volume commands")
+	}
+}
+
+func TestRabbitMQOutboxSmokeScript(t *testing.T) {
+	content := readProjectFile(t, "rabbitmq-outbox-smoke.sh")
+	for _, expected := range []string{"rabbitmq-diagnostics", "outbox_events", "inbox_events", "/healthz", "只读"} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("rabbitmq-outbox-smoke.sh does not contain %q", expected)
+		}
+	}
+	for _, forbidden := range []string{"docker compose down -v", "DROP DATABASE", "FLUSHDB", "docker volume rm"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("rabbitmq-outbox-smoke.sh contains forbidden operation %q", forbidden)
+		}
+	}
+}
+
 func TestRedisRateLimitSmokeScript(t *testing.T) {
 	content := readProjectFile(t, "redis-rate-limit-smoke.sh")
 	for _, expected := range []string{"REDIS_SMOKE_LIMIT", "REDIS_ENVIRONMENT", "REDIS_ADDR=redis:6379", "docker rm -f", "8888", "8889", "429"} {

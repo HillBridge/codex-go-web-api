@@ -29,7 +29,7 @@ go run ./cmd/api
 http://localhost:8888
 ```
 
-### Docker Compose（API、MySQL、Redis、Prometheus）
+### Docker Compose（API、MySQL、Redis、RabbitMQ、Prometheus）
 
 需要以容器方式运行整个本地栈时，执行：
 
@@ -38,7 +38,9 @@ docker compose up --build -d
 docker compose ps
 ```
 
-这会启动 API（`http://localhost:8888`）、MySQL（供 Navicat 使用的 `127.0.0.1:3307`）、Redis（仅 Compose 内部 `redis:6379`）、Prometheus（`http://localhost:9090`）、Jaeger（`http://localhost:16686`）和 Alertmanager（`http://localhost:9093`）。容器内的 API 通过 `mysql:3306` 和 `redis:6379` 访问依赖，外部不应在生产环境映射 MySQL 或 Redis 端口。
+这会启动 API（`http://localhost:8888`）、MySQL（供 Navicat 使用的 `127.0.0.1:3307`）、Redis（仅 Compose 内部 `redis:6379`）、RabbitMQ（AMQP `5672`，管理界面 `http://localhost:15672`）、Prometheus（`http://localhost:9090`）、Jaeger（`http://localhost:16686`）和 Alertmanager（`http://localhost:9093`）。容器内的 API 通过 `mysql:3306`、`redis:6379` 和 `rabbitmq:5672` 访问依赖，外部不应在生产环境映射 MySQL 或 Redis 端口。
+
+配置 RabbitMQ 后，用户、订单和认证写操作会在同一个 MySQL 事务中写入业务表与 `outbox_events`；后台 Publisher 在收到 RabbitMQ Confirm 后标记事件为 `published`，审计 Consumer 使用 `inbox_events` 幂等处理。未设置 `RABBITMQ_URL` 时仍保留宿主机运行的本地异步审计模式。
 
 常用操作：
 
@@ -87,6 +89,12 @@ user_order_api_audit_queue_pending
 | `RATE_LIMIT_API_PER_MINUTE` | `120` | 单 IP 普通 API 每分钟上限。 |
 | `REDIS_ADDR` | 空（Compose 为 `redis:6379`） | 配置后使用 Redis 共享限流；为空时使用进程内存限流。启动时连接失败会终止 API。 |
 | `REDIS_ENVIRONMENT` | `local` | Redis 限流 Key 的环境隔离名，不得包含空白字符。 |
+| `RABBITMQ_URL` | 空（Compose 为 `amqp://app:app_password@rabbitmq:5672/`） | RabbitMQ 连接串；设置后启动时必须连接成功。 |
+| `RABBITMQ_EXCHANGE` | `user-order-api.events` | 持久化 Topic Exchange 名称。 |
+| `RABBITMQ_AUDIT_QUEUE` | `user-order-api.audit.v1` | 审计 Consumer 队列名称。 |
+| `OUTBOX_POLL_INTERVAL` / `OUTBOX_BATCH_SIZE` | `1s` / `100` | Publisher 轮询间隔和单批领取数量。 |
+| `OUTBOX_MAX_ATTEMPTS` | `10` | Outbox 发布失败超过次数后标记 `dead`。 |
+| `CONSUMER_PREFETCH` / `CONSUMER_MAX_RETRIES` | `20` / `5` | Consumer 未确认上限和失败重试上限。 |
 | `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` | 均为空 | 两者同时设置时，仅在该邮箱不存在时创建首个管理员。 |
 | `PORT` | `8888` | HTTP 监听端口，范围为 1–65535。 |
 | `READ_HEADER_TIMEOUT` | `5s` | 读取请求头超时。 |
@@ -128,6 +136,7 @@ go test ./...
 - 本地 Docker 与 Prometheus 使用说明：[docs/local-docker-prometheus.md](docs/local-docker-prometheus.md)
 - 阶段 6 认证、授权与基础安全说明：[docs/phase-6-authentication-authorization-security.md](docs/phase-6-authentication-authorization-security.md)
 - 阶段 8 API 性能基线：[docs/stage8-performance-baseline.md](docs/stage8-performance-baseline.md)
+- RabbitMQ + MySQL Outbox 设计：[docs/superpowers/specs/2026-08-27-rabbitmq-outbox-design.md](docs/superpowers/specs/2026-08-27-rabbitmq-outbox-design.md)
 
 在 Postman 点击 **Import**，选择该 Collection 文件即可。先调用 **Auth / Register**：它会自动保存 `accessToken`、`userId`，Postman 也会保存服务设置的 Refresh Cookie。随后可调用 **Orders / Create Order**；它会生成幂等键和 `orderId`。**Refresh** 会轮换 Access Token，**Replay Create Order** 可验证网络重试不会重复创建订单。
 
@@ -140,6 +149,14 @@ go test ./...
 ```
 
 如需使用其他管理员账号，在命令前设置 `BOOTSTRAP_ADMIN_EMAIL`、`BOOTSTRAP_ADMIN_PASSWORD`；Postman 的 `adminEmail`、`adminPassword` 必须填入相同值。
+
+RabbitMQ Outbox 只读验收：
+
+```bash
+./scripts/rabbitmq-outbox-smoke.sh
+```
+
+脚本不会创建业务数据、删除数据库或删除数据卷。调用注册、登录或订单接口产生事件后再次运行，可查看 Outbox 与 Inbox 的状态汇总。
 
 ## API
 

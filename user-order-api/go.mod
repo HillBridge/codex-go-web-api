@@ -24,6 +24,7 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
+	github.com/rabbitmq/amqp091-go v1.10.0 // indirect
 	github.com/redis/go-redis/v9 v9.22.0 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

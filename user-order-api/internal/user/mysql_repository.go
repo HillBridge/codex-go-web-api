@@ -6,18 +6,64 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 
+	"bridge-go/user-order-api/internal/platform/outbox"
 	"bridge-go/user-order-api/internal/platform/page"
 )
 
 type MySQLRepository struct {
-	db *sql.DB
+	db     *sql.DB
+	events outbox.Repository
 }
 
-func NewMySQLRepository(db *sql.DB) Repository {
-	return &MySQLRepository{db: db}
+func NewMySQLRepository(db *sql.DB, events ...outbox.Repository) Repository {
+	var eventRepo outbox.Repository
+	if len(events) > 0 {
+		eventRepo = events[0]
+	}
+	return &MySQLRepository{db: db, events: eventRepo}
+}
+
+func (r *MySQLRepository) CreateWithEvent(ctx context.Context, input CreateUserRequest, factory func(User) (outbox.Event, error)) (User, bool, error) {
+	if r.events == nil {
+		item, err := r.Create(ctx, input)
+		return item, false, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, false, fmt.Errorf("begin user creation: %w", err)
+	}
+	defer tx.Rollback()
+	name := strings.TrimSpace(input.Name)
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+	createdAt := time.Now().UTC()
+	result, err := tx.ExecContext(ctx, "INSERT INTO users (name, email, created_at) VALUES (?, ?, ?)", name, email, createdAt)
+	if err != nil {
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			return User{}, false, ErrEmailTaken
+		}
+		return User{}, false, fmt.Errorf("insert user: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return User{}, false, fmt.Errorf("read inserted user ID: %w", err)
+	}
+	item := User{ID: id, Name: name, Email: email, CreatedAt: createdAt}
+	event, err := factory(item)
+	if err != nil {
+		return User{}, false, fmt.Errorf("build user event: %w", err)
+	}
+	if err := r.events.AppendTx(ctx, tx, event); err != nil {
+		return User{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, false, fmt.Errorf("commit user creation: %w", err)
+	}
+	return item, true, nil
 }
 
 func (r *MySQLRepository) Create(ctx context.Context, input CreateUserRequest) (User, error) {

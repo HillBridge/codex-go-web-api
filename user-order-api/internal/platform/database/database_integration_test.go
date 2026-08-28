@@ -41,8 +41,8 @@ func TestApplyMigrationsIsIdempotentAndCreatesForeignKey(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&migrations); err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 5 {
-		t.Fatalf("migration count = %d, want 5", migrations)
+	if migrations != 7 {
+		t.Fatalf("migration count = %d, want 7", migrations)
 	}
 	var idempotencyKeyColumns int
 	if err := db.QueryRowContext(ctx, `
@@ -67,6 +67,18 @@ func TestApplyMigrationsIsIdempotentAndCreatesForeignKey(t *testing.T) {
 		}
 	}
 	for _, table := range []string{"users", "orders", "sessions"} {
+		var count int
+		if err := db.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM information_schema.tables
+			WHERE table_schema = DATABASE() AND table_name = ?`, table).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("table %q count = %d, want 1", table, count)
+		}
+	}
+	for _, table := range []string{"outbox_events", "inbox_events"} {
 		var count int
 		if err := db.QueryRowContext(ctx, `
 			SELECT COUNT(*)
@@ -135,6 +147,8 @@ func TestOpenProducesTraceForMySQLOperation(t *testing.T) {
 func resetSchema(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	for _, statement := range []string{
+		"DROP TABLE IF EXISTS inbox_events",
+		"DROP TABLE IF EXISTS outbox_events",
 		"DROP TABLE IF EXISTS sessions",
 		"DROP TABLE IF EXISTS orders",
 		"DROP TABLE IF EXISTS users",

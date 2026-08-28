@@ -90,6 +90,9 @@ func main() {
 		LoginRateLimitPerMinute: config.LoginRateLimitPerMinute, RefreshRateLimitPerMinute: config.RefreshRateLimitPerMinute, APIRateLimitPerMinute: config.APIRateLimitPerMinute,
 		RateLimitStore: rateLimitStore, RateLimitEnvironment: config.RedisEnvironment,
 		BootstrapAdminEmail: config.BootstrapAdminEmail, BootstrapAdminPassword: config.BootstrapAdminPassword,
+		RabbitMQURL: config.RabbitMQURL, RabbitMQExchange: config.RabbitMQExchange, RabbitMQAuditQueue: config.RabbitMQAuditQueue,
+		OutboxPollInterval: config.OutboxPollInterval, OutboxBatchSize: config.OutboxBatchSize, OutboxMaxAttempts: config.OutboxMaxAttempts,
+		ConsumerPrefetch: config.ConsumerPrefetch, ConsumerMaxRetries: config.ConsumerMaxRetries,
 	})
 	cancelStartup()
 	if err != nil {

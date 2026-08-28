@@ -26,9 +26,14 @@ flowchart LR
   MOR --> DB
   AH --> AR[auth.Repository]
   AR --> DB
-  US --> A[audit.AsyncLogger]
-  OS --> A
-  A --> L[stdout / slog]
+  US --> O[(outbox_events)]
+  OS --> O
+  AH --> O
+  O -->|Publisher Confirm| MQ[RabbitMQ]
+  MQ --> C[Audit Consumer / Inbox 幂等]
+  C --> L[stdout / slog]
+  US -.未配置 MQ.-> A[audit.AsyncLogger]
+  OS -.未配置 MQ.-> A
   S --> M[Prometheus Metrics: HTTP / MySQL Pool / Audit Queue]
   M --> DB
 ```
@@ -39,8 +44,9 @@ flowchart LR
 2. `database.Open` 建立 `database/sql` 连接池：最大连接 10、最大空闲 5、连接生命周期 30 分钟，并在 5 秒内完成 Ping。
 3. `database.ApplyMigrations` 从二进制内嵌的 SQL 文件按文件名顺序执行尚未记录的迁移；DDL 成功后才写入 `schema_migrations`。迁移仅向前，遇错立即停止。
 4. 若设置 `REDIS_ADDR`，`main` 在监听端口前 Ping Redis 并将计数器注入应用；Redis 不可用时启动失败。未设置时限流使用进程内存实现。
-5. `main` 调用 `app.NewProduction`；该函数创建 `user.NewMySQLRepository`、`order.NewMySQLRepository` 和 `auth.NewMySQLRepository`，再组装相同的 HTTP 应用。认证数据与业务数据使用同一个 MySQL 数据库；会话只存 Refresh Token 的 SHA-256 哈希。
-6. 若同时配置 `BOOTSTRAP_ADMIN_EMAIL`、`BOOTSTRAP_ADMIN_PASSWORD`，`app.NewProduction` 启动时仅在邮箱不存在时创建管理员。优雅停机的实际关闭顺序为 HTTP → 审计日志 → Redis → 数据库连接池。
+5. `main` 调用 `app.NewProduction`；该函数创建共享 `outbox.Repository`，并将其注入 user/order/auth MySQL Repository。每个业务写事务同时提交业务表与 `outbox_events`；认证数据与业务数据使用同一个 MySQL 数据库，会话只存 Refresh Token 的 SHA-256 哈希。
+6. 配置 `RABBITMQ_URL` 后，应用启动时声明持久化 Exchange、审计队列、重试队列和 DLQ，并启动 Outbox Publisher 与 Inbox 幂等 Audit Consumer；未配置时保留本地 `AsyncLogger` 降级路径。
+7. 若同时配置 `BOOTSTRAP_ADMIN_EMAIL`、`BOOTSTRAP_ADMIN_PASSWORD`，`app.NewProduction` 启动时仅在邮箱不存在时创建管理员。优雅停机的实际关闭顺序为 HTTP → Publisher/Consumer → RabbitMQ → 审计日志 → Redis → 数据库连接池。
 
 ## 三条组装路径
 
@@ -67,7 +73,7 @@ MySQL HTTP 集成测试：internal/app/http_test.go → app.NewProduction → My
 
 ## 本地容器运行
 
-`docker compose up --build -d` 启动 API、MySQL、Redis、Prometheus、Jaeger 和 Alertmanager：`api` 提供 `8888` 端口，`mysql` 使用命名卷持久化并额外映射 `3307` 供 Navicat 本地查看，Redis 仅在 Compose 内部提供 `redis:6379`，Prometheus 提供 `9090` 端口并每 15 秒抓取 `api:8888/metrics`。容器间通过 Compose 内部网络通信，API 的数据库地址为 `mysql:3306`。
+`docker compose up --build -d` 启动 API、MySQL、Redis、RabbitMQ、Prometheus、Jaeger 和 Alertmanager：`api` 提供 `8888` 端口，`mysql` 使用命名卷持久化并额外映射 `3307` 供 Navicat 本地查看，Redis 仅在 Compose 内部提供 `redis:6379`，RabbitMQ 提供内部 AMQP `5672` 和本地管理界面 `15672`，Prometheus 提供 `9090` 端口并每 15 秒抓取 `api:8888/metrics`。容器间通过 Compose 内部网络通信，API 的数据库地址为 `mysql:3306`。
 
 ## 路由
 
@@ -105,5 +111,6 @@ MySQL HTTP 集成测试：internal/app/http_test.go → app.NewProduction → My
 - MySQL `8.4`（本地由 `compose.yaml` 提供）
 - Prometheus `3.5.0`（本地由 `compose.yaml` 提供）
 - Redis `7.4`（本地由 `compose.yaml` 提供，仅用于共享限流计数）
+- RabbitMQ `4-management-alpine`（本地由 `compose.yaml` 提供，用于 Outbox 异步投递）
 
 创建订单的持久化时序见：[订单创建时序图](images/order-create-sequence.svg)。

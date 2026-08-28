@@ -38,6 +38,14 @@ type serverConfig struct {
 	WriteTimeout              time.Duration
 	IdleTimeout               time.Duration
 	ShutdownTimeout           time.Duration
+	RabbitMQURL               string
+	RabbitMQExchange          string
+	RabbitMQAuditQueue        string
+	OutboxPollInterval        time.Duration
+	OutboxBatchSize           int
+	OutboxMaxAttempts         int
+	ConsumerPrefetch          int
+	ConsumerMaxRetries        int
 }
 
 func defaultServerConfig() serverConfig {
@@ -57,6 +65,13 @@ func defaultServerConfig() serverConfig {
 		WriteTimeout:              15 * time.Second,
 		IdleTimeout:               60 * time.Second,
 		ShutdownTimeout:           10 * time.Second,
+		RabbitMQExchange:          "user-order-api.events",
+		RabbitMQAuditQueue:        "user-order-api.audit.v1",
+		OutboxPollInterval:        time.Second,
+		OutboxBatchSize:           100,
+		OutboxMaxAttempts:         10,
+		ConsumerPrefetch:          20,
+		ConsumerMaxRetries:        5,
 	}
 }
 
@@ -119,6 +134,45 @@ func loadConfig(getenv func(string) string) (serverConfig, error) {
 	}
 	config.OTLPGRPCEndpoint = strings.TrimSpace(getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
 	config.RedisAddr = strings.TrimSpace(getenv("REDIS_ADDR"))
+	config.RabbitMQURL = strings.TrimSpace(getenv("RABBITMQ_URL"))
+	if raw := strings.TrimSpace(getenv("RABBITMQ_EXCHANGE")); raw != "" {
+		config.RabbitMQExchange = raw
+	}
+	if raw := strings.TrimSpace(getenv("RABBITMQ_AUDIT_QUEUE")); raw != "" {
+		config.RabbitMQAuditQueue = raw
+	}
+	for _, item := range []struct {
+		name   string
+		target *time.Duration
+	}{
+		{name: "OUTBOX_POLL_INTERVAL", target: &config.OutboxPollInterval},
+	} {
+		if raw := strings.TrimSpace(getenv(item.name)); raw != "" {
+			duration, err := time.ParseDuration(raw)
+			if err != nil || duration <= 0 {
+				return serverConfig{}, fmt.Errorf("%s must be a positive Go duration", item.name)
+			}
+			*item.target = duration
+		}
+	}
+	for _, item := range []struct {
+		name   string
+		target *int
+		max    int
+	}{
+		{name: "OUTBOX_BATCH_SIZE", target: &config.OutboxBatchSize, max: 1000},
+		{name: "OUTBOX_MAX_ATTEMPTS", target: &config.OutboxMaxAttempts, max: 1000},
+		{name: "CONSUMER_PREFETCH", target: &config.ConsumerPrefetch, max: 10000},
+		{name: "CONSUMER_MAX_RETRIES", target: &config.ConsumerMaxRetries, max: 1000},
+	} {
+		if raw := strings.TrimSpace(getenv(item.name)); raw != "" {
+			value, err := strconv.Atoi(raw)
+			if err != nil || value <= 0 || value > item.max {
+				return serverConfig{}, fmt.Errorf("%s must be a positive integer up to %d", item.name, item.max)
+			}
+			*item.target = value
+		}
+	}
 	if raw := strings.TrimSpace(getenv("REDIS_ENVIRONMENT")); raw != "" {
 		if strings.IndexAny(raw, " \t\r\n") >= 0 {
 			return serverConfig{}, fmt.Errorf("REDIS_ENVIRONMENT must not contain whitespace")

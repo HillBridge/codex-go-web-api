@@ -8,12 +8,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"sync"
 	"time"
 
 	"bridge-go/user-order-api/internal/auth"
 	"bridge-go/user-order-api/internal/order"
 	"bridge-go/user-order-api/internal/platform/audit"
 	"bridge-go/user-order-api/internal/platform/httpx"
+	"bridge-go/user-order-api/internal/platform/messaging"
 	"bridge-go/user-order-api/internal/platform/observability"
 	"bridge-go/user-order-api/internal/platform/security"
 	"bridge-go/user-order-api/internal/user"
@@ -34,20 +36,44 @@ type Dependencies struct {
 	RateLimits           security.Limits
 	RateLimitStore       security.CounterStore
 	RateLimitEnvironment string
+	Workers              []Worker
+	Broker               messaging.Broker
+	BrokerReady          func() bool
+}
+
+type Worker interface {
+	Run(context.Context) error
 }
 
 type Application struct {
-	handler     http.Handler
-	auditLogger *audit.AsyncLogger
-	readiness   readinessChecker
-	metrics     *observability.Metrics
+	handler      http.Handler
+	auditLogger  *audit.AsyncLogger
+	readiness    readinessChecker
+	metrics      *observability.Metrics
+	workerCancel context.CancelFunc
+	workerWG     sync.WaitGroup
+	broker       messaging.Broker
+	brokerReady  func() bool
 }
 
 func NewWithDependencies(logger *slog.Logger, deps Dependencies) *Application {
 	auditLogger := audit.NewAsyncLogger(logger)
 	deps.AuthService.SetAuditLogger(auditLogger)
 	metrics, _ := observability.New(deps.DatabaseStats, auditLogger)
-	application := &Application{auditLogger: auditLogger, readiness: deps.Readiness, metrics: metrics}
+	application := &Application{auditLogger: auditLogger, readiness: deps.Readiness, metrics: metrics, broker: deps.Broker, brokerReady: deps.BrokerReady}
+	if len(deps.Workers) > 0 {
+		workerCtx, cancel := context.WithCancel(context.Background())
+		application.workerCancel = cancel
+		for _, worker := range deps.Workers {
+			application.workerWG.Add(1)
+			go func(worker Worker) {
+				defer application.workerWG.Done()
+				if err := worker.Run(workerCtx); err != nil && workerCtx.Err() == nil {
+					logger.Error("background worker stopped", "error", err)
+				}
+			}(worker)
+		}
+	}
 
 	userHandler := user.NewHandler(user.NewService(deps.UserRepository, auditLogger))
 	orderHandler := order.NewHandler(order.NewService(deps.OrderRepository, deps.UserRepository, auditLogger))
@@ -93,6 +119,19 @@ func (a *Application) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Application) Close(ctx context.Context) error {
+	if a.workerCancel != nil {
+		a.workerCancel()
+	}
+	workersDone := make(chan struct{})
+	go func() { a.workerWG.Wait(); close(workersDone) }()
+	select {
+	case <-workersDone:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if a.broker != nil {
+		_ = a.broker.Close()
+	}
 	return a.auditLogger.Close(ctx)
 }
 
@@ -116,6 +155,10 @@ func (a *Application) readyz(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
 			return
 		}
+	}
+	if a.brokerReady != nil && !a.brokerReady() {
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

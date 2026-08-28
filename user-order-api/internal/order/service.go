@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"bridge-go/user-order-api/internal/platform/audit"
 	"bridge-go/user-order-api/internal/platform/httpx"
+	"bridge-go/user-order-api/internal/platform/outbox"
 	"bridge-go/user-order-api/internal/platform/page"
 	"bridge-go/user-order-api/internal/user"
 )
@@ -48,7 +50,21 @@ func (s *Service) Create(ctx context.Context, input CreateOrderRequest) (Order, 
 		return Order{}, false, httpx.Internal("failed to find user", fmt.Errorf("find user: %w", err))
 	}
 
-	order, replayed, err := s.repo.Create(ctx, input)
+	var (
+		item           Order
+		replayed       bool
+		eventPersisted bool
+		err            error
+	)
+	if repo, ok := s.repo.(interface {
+		CreateWithEvent(context.Context, CreateOrderRequest, func(Order) (outbox.Event, error)) (Order, bool, bool, error)
+	}); ok {
+		item, replayed, eventPersisted, err = repo.CreateWithEvent(ctx, input, func(order Order) (outbox.Event, error) {
+			return outbox.NewEvent("order.created", "order", order.ID, map[string]any{"orderID": order.ID, "userID": order.UserID}, time.Now().UTC())
+		})
+	} else {
+		item, replayed, err = s.repo.Create(ctx, input)
+	}
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			return Order{}, false, httpx.BadRequestCode("USER_NOT_FOUND", "user does not exist")
@@ -59,10 +75,10 @@ func (s *Service) Create(ctx context.Context, input CreateOrderRequest) (Order, 
 		return Order{}, false, httpx.Internal("failed to create order", fmt.Errorf("create order: %w", err))
 	}
 
-	if !replayed {
-		s.audit.Record(ctx, "order.created", map[string]any{"orderID": order.ID, "userID": order.UserID})
+	if !replayed && !eventPersisted {
+		s.audit.Record(ctx, "order.created", map[string]any{"orderID": item.ID, "userID": item.UserID})
 	}
-	return order, replayed, nil
+	return item, replayed, nil
 }
 
 func (s *Service) Pay(ctx context.Context, id int64) (Order, error) {
@@ -74,7 +90,21 @@ func (s *Service) Cancel(ctx context.Context, id int64) (Order, error) {
 }
 
 func (s *Service) transition(ctx context.Context, id int64, target Status, action string) (Order, error) {
-	order, changed, err := s.repo.Transition(ctx, id, target)
+	var (
+		item           Order
+		changed        bool
+		eventPersisted bool
+		err            error
+	)
+	if repo, ok := s.repo.(interface {
+		TransitionWithEvent(context.Context, int64, Status, func(Order) (outbox.Event, error)) (Order, bool, bool, error)
+	}); ok {
+		item, changed, eventPersisted, err = repo.TransitionWithEvent(ctx, id, target, func(order Order) (outbox.Event, error) {
+			return outbox.NewEvent(action, "order", order.ID, map[string]any{"orderID": order.ID, "userID": order.UserID}, time.Now().UTC())
+		})
+	} else {
+		item, changed, err = s.repo.Transition(ctx, id, target)
+	}
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return Order{}, httpx.NotFoundCode("ORDER_NOT_FOUND", "order not found")
@@ -85,9 +115,11 @@ func (s *Service) transition(ctx context.Context, id int64, target Status, actio
 		return Order{}, httpx.Internal("failed to transition order", fmt.Errorf("transition order: %w", err))
 	}
 	if changed {
-		s.audit.Record(ctx, action, map[string]any{"orderID": order.ID, "userID": order.UserID})
+		if !eventPersisted {
+			s.audit.Record(ctx, action, map[string]any{"orderID": item.ID, "userID": item.UserID})
+		}
 	}
-	return order, nil
+	return item, nil
 }
 
 func (s *Service) List(ctx context.Context, request page.Request) (page.Result[Order], error) {
